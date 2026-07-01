@@ -4,6 +4,7 @@ import { AuthLayout } from '@/components/layout/AuthLayout'
 import { LoginPage } from '@/pages/auth/LoginPage'
 import { OnboardingPage } from '@/pages/auth/OnboardingPage'
 import { MeetingsPage } from '@/pages/MeetingsPage'
+import { NewMeetingPage } from '@/pages/NewMeetingPage'
 import { MeetingDetailPage } from '@/pages/MeetingDetailPage'
 import { TasksPage } from '@/pages/TasksPage'
 import { SchedulerPage } from '@/pages/SchedulerPage'
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { path: 'meetings',              element: <MeetingsPage /> },
+      { path: 'meetings/new',          element: <NewMeetingPage /> },
       { path: 'meetings/:meetingId',   element: <MeetingDetailPage /> },
       { path: 'tasks',                 element: <TasksPage /> },
       { path: 'scheduler',             element: <SchedulerPage /> },

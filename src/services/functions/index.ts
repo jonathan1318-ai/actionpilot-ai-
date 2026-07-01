@@ -1,12 +1,11 @@
 import { httpsCallable } from 'firebase/functions'
 import { functions } from '@/services/firebase/config'
-import type { Task } from '@/types'
 
 interface TranscribePayload { meetingId: string; audioUrl: string }
 interface TranscribeResult  { transcript: string }
 
 interface ExtractPayload { meetingId: string; transcript: string; orgId: string }
-interface ExtractResult  { tasks: Omit<Task, 'taskId' | 'createdAt' | 'updatedAt'>[] }
+interface ExtractResult  { taskIds: string[]; summary: string; taskCount: number }
 
 interface SchedulePayload { taskIds: string[]; orgId: string; userId: string }
 interface ScheduleResult  { scheduled: { taskId: string; eventId: string }[] }
