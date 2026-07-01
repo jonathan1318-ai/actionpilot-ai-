@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createMeeting } from '@/services/firebase/meetings'
-import { extractTasks } from '@/services/functions'
+import { createMeeting, updateMeetingStatus } from '@/services/firebase/meetings'
+import { extractTasksFromTranscript } from '@/services/ai/extractTasks'
 import { useAuthStore } from '@/store/auth.store'
 import { Card } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
@@ -21,19 +21,23 @@ export function NewMeetingPage() {
     if (!user || !title.trim() || !transcript.trim()) return
     setLoading(true)
     setError('')
+    const meetingDate = new Date()
+    let meetingId = ''
     try {
-      const meetingId = await createMeeting(
+      meetingId = await createMeeting(
         user.orgId,
         user.uid,
         title.trim(),
         'manual',
-        new Date(),
+        meetingDate,
         duration,
         [user.uid],
       )
-      await extractTasks({ meetingId, transcript: transcript.trim(), orgId: user.orgId })
+      await updateMeetingStatus(meetingId, { status: 'extracting', transcript: transcript.trim() })
+      await extractTasksFromTranscript(meetingId, user.orgId, transcript.trim(), meetingDate, user.uid)
       navigate(`/meetings/${meetingId}`)
     } catch (err) {
+      if (meetingId) await updateMeetingStatus(meetingId, { status: 'error' })
       setError((err as Error).message || 'Failed to process meeting')
     } finally {
       setLoading(false)
