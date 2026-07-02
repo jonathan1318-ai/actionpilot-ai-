@@ -12,6 +12,7 @@ export function DashboardPage() {
   const [analytics, setAnalytics] = useState<MonthlyAnalytics | null>(null)
   const [members, setMembers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!orgId) return
@@ -20,10 +21,12 @@ export function DashboardPage() {
         setMembers(users)
         setAnalytics(computeAnalytics(tasks, users))
       })
+      .catch(err => setError((err as Error).message || 'Failed to load dashboard data'))
       .finally(() => setLoading(false))
   }, [orgId])
 
   if (loading) return <div className="flex justify-center pt-20"><Spinner size="lg" /></div>
+  if (error) return <p className="text-sm text-red-600">{error}</p>
   if (!analytics) return <p className="text-gray-500">No data yet.</p>
 
   const rate = Math.round(analytics.completionRate * 100)
