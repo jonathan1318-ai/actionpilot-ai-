@@ -43,9 +43,19 @@ export default {
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2048,
       })
-      const text = typeof result === 'object' && result !== null && 'response' in result
-        ? String((result as { response?: string }).response ?? '')
-        : ''
+
+      let text = ''
+      if (typeof result === 'string') {
+        text = result
+      } else if (result && typeof result === 'object' && 'response' in result) {
+        const response = (result as { response?: unknown }).response
+        text = typeof response === 'string' ? response : JSON.stringify(response ?? '')
+      }
+
+      if (!text) {
+        return json({ error: `Unexpected Workers AI response shape: ${JSON.stringify(result)}` }, 502, env)
+      }
+
       return json({ text }, 200, env)
     } catch (err) {
       return json({ error: `Workers AI request failed: ${(err as Error).message}` }, 502, env)
