@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { listUnscheduledTasks } from '@/services/firebase/tasks'
-import { scheduleTasks } from '@/services/functions'
 import { useAuthStore } from '@/store/auth.store'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -16,6 +15,7 @@ export function SchedulerPage() {
   const [loading, setLoading] = useState(true)
   const [scheduling, setScheduling] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!user) return
@@ -35,10 +35,12 @@ export function SchedulerPage() {
   async function handleSchedule() {
     if (!user || selected.size === 0) return
     setScheduling(true)
+    setError('')
     try {
-      await scheduleTasks({ taskIds: [...selected], orgId: user.orgId, userId: user.uid })
-      setTasks(prev => prev.filter(t => !selected.has(t.taskId)))
-      setSelected(new Set())
+      // Google Calendar scheduling isn't wired up yet - see roadmap.
+      throw new Error('Smart Scheduler isn\'t connected to Google Calendar yet. This is coming in a future update.')
+    } catch (err) {
+      setError((err as Error).message)
     } finally {
       setScheduling(false)
     }
@@ -57,6 +59,8 @@ export function SchedulerPage() {
           Schedule {selected.size > 0 ? `(${selected.size})` : ''}
         </Button>
       </div>
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
 
       {tasks.length === 0 && (
         <Card className="py-16 text-center text-gray-400">All tasks are scheduled.</Card>

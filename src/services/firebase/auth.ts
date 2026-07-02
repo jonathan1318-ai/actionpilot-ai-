@@ -6,6 +6,7 @@ import {
 } from 'firebase/auth'
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db, googleProvider } from './config'
+import { createOrganization } from './organizations'
 import type { User } from '@/types'
 
 export async function signInWithGoogle(): Promise<void> {
@@ -26,7 +27,12 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
 
   if (snap.exists()) {
     await setDoc(ref, { lastActiveAt: serverTimestamp() }, { merge: true })
-    return snap.data() as User
+    const existing = snap.data() as User
+    if (!existing.orgId) {
+      const orgId = await createOrganization(firebaseUser.uid, `${existing.displayName || 'My'}'s Workspace`, '')
+      return { ...existing, orgId }
+    }
+    return existing
   }
 
   const newUser: Omit<User, 'createdAt' | 'lastActiveAt'> & Record<string, unknown> = {
@@ -43,5 +49,6 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
   }
 
   await setDoc(ref, newUser)
-  return (await getDoc(ref)).data() as User
+  const orgId = await createOrganization(firebaseUser.uid, `${newUser.displayName || 'My'}'s Workspace`, '')
+  return { ...(await getDoc(ref)).data(), orgId } as User
 }
