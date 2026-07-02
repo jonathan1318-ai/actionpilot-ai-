@@ -2,7 +2,8 @@ import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
 import { auth } from '@/services/firebase/config'
 import { useCalendarStore } from '@/store/calendar.store'
 
-const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events'
+// calendar.events alone doesn't cover freeBusy queries - need the full calendar scope.
+const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar'
 const ASSUMED_TOKEN_LIFETIME_SECONDS = 3500
 
 export async function connectGoogleCalendar(): Promise<void> {
