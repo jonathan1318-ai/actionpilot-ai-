@@ -1,6 +1,6 @@
-export async function callGeminiProxy(prompt: string): Promise<string> {
-  const url = import.meta.env.VITE_GEMINI_PROXY_URL
-  if (!url) throw new Error('VITE_GEMINI_PROXY_URL is not set')
+export async function callAiProxy(prompt: string): Promise<string> {
+  const url = import.meta.env.VITE_AI_PROXY_URL
+  if (!url) throw new Error('VITE_AI_PROXY_URL is not set')
 
   const res = await fetch(url, {
     method: 'POST',
@@ -8,7 +8,7 @@ export async function callGeminiProxy(prompt: string): Promise<string> {
     body: JSON.stringify({ prompt }),
   })
 
-  if (!res.ok) throw new Error(`Gemini proxy request failed: ${await res.text()}`)
+  if (!res.ok) throw new Error(`AI proxy request failed: ${await res.text()}`)
 
   const data = (await res.json()) as { text: string }
   return data.text

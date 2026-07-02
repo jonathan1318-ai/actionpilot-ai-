@@ -1,7 +1,9 @@
 export interface Env {
-  GEMINI_API_KEY: string
+  AI: Ai
   ALLOWED_ORIGIN: string
 }
+
+const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 
 function corsHeaders(env: Env): HeadersInit {
   return {
@@ -36,25 +38,17 @@ export default {
       return json({ error: 'Request body must be JSON with a "prompt" string' }, 400, env)
     }
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-      },
-    )
-
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text()
-      return json({ error: `Gemini request failed: ${errText}` }, 502, env)
+    try {
+      const result = await env.AI.run(MODEL, {
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 2048,
+      })
+      const text = typeof result === 'object' && result !== null && 'response' in result
+        ? String((result as { response?: string }).response ?? '')
+        : ''
+      return json({ text }, 200, env)
+    } catch (err) {
+      return json({ error: `Workers AI request failed: ${(err as Error).message}` }, 502, env)
     }
-
-    const data = await geminiRes.json<{
-      candidates?: { content?: { parts?: { text?: string }[] } }[]
-    }>()
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
-
-    return json({ text }, 200, env)
   },
 }

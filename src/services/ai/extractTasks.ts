@@ -9,7 +9,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore'
 import { db } from '@/services/firebase/config'
-import { callGeminiProxy, extractJson } from './gemini'
+import { callAiProxy, extractJson } from './proxy'
 import { buildExtractionPrompt } from './prompt'
 import type { TaskPriority, TaskPriorityLabel } from '@/types'
 
@@ -49,7 +49,7 @@ export async function extractTasksFromTranscript(
   const dateIso = meetingDate.toISOString().slice(0, 10)
   const prompt = buildExtractionPrompt(transcript, members, dateIso)
 
-  const text = await callGeminiProxy(prompt)
+  const text = await callAiProxy(prompt)
   const parsed = extractJson<ExtractionResponse>(text)
 
   const batch = writeBatch(db)
