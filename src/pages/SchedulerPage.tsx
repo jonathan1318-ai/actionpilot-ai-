@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { listUnscheduledTasks } from '@/services/firebase/tasks'
+import { connectGoogleCalendar, getCalendarAccessToken } from '@/services/google/auth'
+import { scheduleTasksOnCalendar } from '@/services/google/scheduler'
 import { useAuthStore } from '@/store/auth.store'
+import { useCalendarStore } from '@/store/calendar.store'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
@@ -11,9 +14,11 @@ import type { Task } from '@/types'
 
 export function SchedulerPage() {
   const user = useAuthStore(s => s.user)
+  const connected = useCalendarStore(s => s.isConnected())
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [scheduling, setScheduling] = useState(false)
+  const [connecting, setConnecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [error, setError] = useState('')
 
@@ -32,15 +37,34 @@ export function SchedulerPage() {
     })
   }
 
+  async function handleConnect() {
+    setConnecting(true)
+    setError('')
+    try {
+      await connectGoogleCalendar()
+    } catch (err) {
+      setError((err as Error).message || 'Failed to connect Google Calendar')
+    } finally {
+      setConnecting(false)
+    }
+  }
+
   async function handleSchedule() {
     if (!user || selected.size === 0) return
+    const accessToken = getCalendarAccessToken()
+    if (!accessToken) {
+      setError('Google Calendar connection expired. Please reconnect.')
+      return
+    }
     setScheduling(true)
     setError('')
     try {
-      // Google Calendar scheduling isn't wired up yet - see roadmap.
-      throw new Error('Smart Scheduler isn\'t connected to Google Calendar yet. This is coming in a future update.')
+      const selectedTasks = tasks.filter(t => selected.has(t.taskId))
+      await scheduleTasksOnCalendar(accessToken, selectedTasks)
+      setTasks(prev => prev.filter(t => !selected.has(t.taskId)))
+      setSelected(new Set())
     } catch (err) {
-      setError((err as Error).message)
+      setError((err as Error).message || 'Failed to schedule tasks')
     } finally {
       setScheduling(false)
     }
@@ -49,15 +73,21 @@ export function SchedulerPage() {
   if (loading) return <div className="flex justify-center pt-20"><Spinner size="lg" /></div>
 
   return (
-    <div className="space-y-4 max-w-2xl">
+    <div className="max-w-2xl space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="font-semibold text-gray-900">Unscheduled tasks</h2>
-          <p className="text-xs text-gray-400 mt-0.5">Select tasks to book focus time on your calendar.</p>
+          <p className="mt-0.5 text-xs text-gray-400">Select tasks to book focus time on your calendar.</p>
         </div>
-        <Button onClick={handleSchedule} loading={scheduling} disabled={selected.size === 0}>
-          Schedule {selected.size > 0 ? `(${selected.size})` : ''}
-        </Button>
+        {connected ? (
+          <Button onClick={handleSchedule} loading={scheduling} disabled={selected.size === 0}>
+            Schedule {selected.size > 0 ? `(${selected.size})` : ''}
+          </Button>
+        ) : (
+          <Button onClick={handleConnect} loading={connecting} variant="secondary">
+            Connect Google Calendar
+          </Button>
+        )}
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
