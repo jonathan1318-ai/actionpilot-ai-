@@ -1,27 +1,33 @@
 import { useState } from 'react'
-import { searchMeetings } from '@/services/functions'
+import { Link } from 'react-router-dom'
+import { searchMeetings, type SearchResultItem } from '@/services/ai/search'
 import { useAuthStore } from '@/store/auth.store'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
-import { Link } from 'react-router-dom'
-
-interface Result { meetingId: string; excerpt: string; score: number }
 
 export function SearchPage() {
   const user = useAuthStore(s => s.user)
   const [q, setQ] = useState('')
-  const [results, setResults] = useState<Result[]>([])
+  const [answer, setAnswer] = useState('')
+  const [results, setResults] = useState<SearchResultItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const [searched, setSearched] = useState(false)
 
   async function handleSearch() {
     if (!user || !q.trim()) return
     setLoading(true)
+    setError('')
+    setAnswer('')
+    setResults([])
     try {
-      const res = await searchMeetings({ query: q.trim(), orgId: user.orgId })
-      setResults(res.data.results)
+      const res = await searchMeetings(user.orgId, q.trim())
+      setAnswer(res.answer)
+      setResults(res.results)
       setSearched(true)
+    } catch (err) {
+      setError((err as Error).message || 'Search failed')
     } finally {
       setLoading(false)
     }
@@ -40,15 +46,24 @@ export function SearchPage() {
         <Button onClick={handleSearch} loading={loading} disabled={!q.trim()}>Search</Button>
       </div>
 
-      {searched && results.length === 0 && (
-        <p className="text-sm text-gray-400">No results found for "{q}".</p>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
+      {answer && (
+        <Card className="p-4">
+          <p className="text-sm leading-relaxed text-gray-700">{answer}</p>
+        </Card>
+      )}
+
+      {searched && !error && results.length === 0 && (
+        <p className="text-sm text-gray-400">No matching meetings found.</p>
       )}
 
       <div className="space-y-3">
         {results.map(r => (
           <Link key={r.meetingId} to={`/meetings/${r.meetingId}`}>
-            <Card className="p-4 hover:shadow-md transition-shadow">
-              <p className="text-sm text-gray-700 leading-relaxed">{r.excerpt}</p>
+            <Card className="p-4 transition-shadow hover:shadow-md">
+              <p className="text-sm font-medium text-gray-900">{r.title}</p>
+              {r.excerpt && <p className="mt-1 text-sm leading-relaxed text-gray-600">{r.excerpt}</p>}
               <p className="mt-1 text-xs text-brand-600">View meeting →</p>
             </Card>
           </Link>
