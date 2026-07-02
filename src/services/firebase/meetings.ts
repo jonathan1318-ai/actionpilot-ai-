@@ -44,6 +44,8 @@ export async function createMeeting(
     attendeeIds,
     transcript: '',
     summary: '',
+    keyHighlights: [],
+    decisions: [],
     date,
     duration,
     taskCount: 0,

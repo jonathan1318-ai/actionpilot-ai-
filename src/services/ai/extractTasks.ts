@@ -23,6 +23,8 @@ interface ExtractedTask {
 
 interface ExtractionResponse {
   summary: string
+  keyHighlights: string[]
+  decisions: string[]
   tasks: ExtractedTask[]
 }
 
@@ -82,6 +84,8 @@ export async function extractTasksFromTranscript(
   batch.update(doc(db, 'meetings', meetingId), {
     status: 'ready',
     summary: parsed.summary ?? '',
+    keyHighlights: parsed.keyHighlights ?? [],
+    decisions: parsed.decisions ?? [],
     taskCount: parsed.tasks.length,
     updatedAt: serverTimestamp(),
   })

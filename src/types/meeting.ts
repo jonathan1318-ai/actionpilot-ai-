@@ -12,6 +12,8 @@ export interface Meeting {
   attendeeIds: string[]
   transcript: string
   summary: string
+  keyHighlights: string[]
+  decisions: string[]
   date: Timestamp
   duration: number
   taskCount: number
