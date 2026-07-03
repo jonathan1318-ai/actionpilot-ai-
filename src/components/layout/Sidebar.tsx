@@ -6,6 +6,7 @@ const navItems = [
   { to: '/scheduler', label: 'Scheduler',  icon: '📅' },
   { to: '/dashboard', label: 'Dashboard',  icon: '📊' },
   { to: '/search',    label: 'Search',     icon: '🔍' },
+  { to: '/settings',  label: 'Settings',   icon: '⚙️' },
 ]
 
 export function Sidebar() {

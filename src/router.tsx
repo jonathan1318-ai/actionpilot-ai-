@@ -10,6 +10,7 @@ import { TasksPage } from '@/pages/TasksPage'
 import { SchedulerPage } from '@/pages/SchedulerPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { SearchPage } from '@/pages/SearchPage'
+import { SettingsPage } from '@/pages/SettingsPage'
 
 export const router = createBrowserRouter([
   {
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
       { path: 'scheduler',             element: <SchedulerPage /> },
       { path: 'dashboard',             element: <DashboardPage /> },
       { path: 'search',                element: <SearchPage /> },
+      { path: 'settings',              element: <SettingsPage /> },
     ],
   },
 ])

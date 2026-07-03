@@ -50,3 +50,17 @@ export async function listOrgUsers(orgId: string): Promise<User[]> {
   const snaps = await getDocs(q)
   return snaps.docs.map(d => d.data() as User)
 }
+
+export async function updateOrganizationSettings(
+  orgId: string,
+  updates: { name?: string; settings?: Partial<Organization['settings']> },
+): Promise<void> {
+  const payload: Record<string, unknown> = {}
+  if (updates.name !== undefined) payload.name = updates.name
+  if (updates.settings) {
+    for (const [key, value] of Object.entries(updates.settings)) {
+      payload[`settings.${key}`] = value
+    }
+  }
+  await updateDoc(doc(db, 'organizations', orgId), payload)
+}

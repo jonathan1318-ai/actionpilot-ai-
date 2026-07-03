@@ -3,14 +3,24 @@ import { listBusyIntervals, createCalendarEvent, type BusyInterval } from './cal
 import { scheduleTask } from '@/services/firebase/tasks'
 import type { Task } from '@/types'
 
-const WORK_START_HOUR = 9
-const WORK_END_HOUR = 18
+export interface WorkHours {
+  startHour: number
+  endHour: number
+  workDays: number[]
+}
+
+export const DEFAULT_WORK_HOURS: WorkHours = { startHour: 9, endHour: 18, workDays: [1, 2, 3, 4, 5] }
+
+export function hourFromTimeString(time: string): number {
+  const hour = Number(time.split(':')[0])
+  return Number.isFinite(hour) ? hour : 9
+}
+
 const SLOT_MINUTES = 30
 const SEARCH_DAYS = 14
 
-function isWeekday(date: Date): boolean {
-  const day = date.getDay()
-  return day !== 0 && day !== 6
+function isWorkDay(date: Date, workDays: number[]): boolean {
+  return workDays.includes(date.getDay())
 }
 
 function overlaps(aStart: Date, aEnd: Date, bStart: Date, bEnd: Date): boolean {
@@ -25,34 +35,39 @@ function roundUpToSlot(date: Date): Date {
   return rounded
 }
 
-function nextWorkDayStart(date: Date): Date {
+function nextWorkDayStart(date: Date, hours: WorkHours): Date {
   const next = new Date(date)
   next.setDate(next.getDate() + 1)
-  next.setHours(WORK_START_HOUR, 0, 0, 0)
-  while (!isWeekday(next)) next.setDate(next.getDate() + 1)
+  next.setHours(hours.startHour, 0, 0, 0)
+  while (!isWorkDay(next, hours.workDays)) next.setDate(next.getDate() + 1)
   return next
 }
 
-function findNextFreeSlot(busy: BusyInterval[], from: Date, durationMinutes: number): { start: Date; end: Date } {
+function findNextFreeSlot(
+  busy: BusyInterval[],
+  from: Date,
+  durationMinutes: number,
+  hours: WorkHours,
+): { start: Date; end: Date } {
   let candidate = roundUpToSlot(from)
   const limit = new Date(from)
   limit.setDate(limit.getDate() + SEARCH_DAYS)
 
   while (candidate < limit) {
-    if (!isWeekday(candidate) || candidate.getHours() >= WORK_END_HOUR) {
-      candidate = nextWorkDayStart(candidate)
+    if (!isWorkDay(candidate, hours.workDays) || candidate.getHours() >= hours.endHour) {
+      candidate = nextWorkDayStart(candidate, hours)
       continue
     }
-    if (candidate.getHours() < WORK_START_HOUR) {
+    if (candidate.getHours() < hours.startHour) {
       candidate = new Date(candidate)
-      candidate.setHours(WORK_START_HOUR, 0, 0, 0)
+      candidate.setHours(hours.startHour, 0, 0, 0)
       continue
     }
 
     const slotEnd = new Date(candidate.getTime() + durationMinutes * 60_000)
-    const overflowsWorkDay = slotEnd.getHours() > WORK_END_HOUR || (slotEnd.getHours() === WORK_END_HOUR && slotEnd.getMinutes() > 0)
+    const overflowsWorkDay = slotEnd.getHours() > hours.endHour || (slotEnd.getHours() === hours.endHour && slotEnd.getMinutes() > 0)
     if (overflowsWorkDay) {
-      candidate = nextWorkDayStart(candidate)
+      candidate = nextWorkDayStart(candidate, hours)
       continue
     }
 
@@ -65,7 +80,11 @@ function findNextFreeSlot(busy: BusyInterval[], from: Date, durationMinutes: num
   throw new Error('No free slot found in the next 14 days')
 }
 
-export async function scheduleTasksOnCalendar(accessToken: string, tasks: Task[]): Promise<void> {
+export async function scheduleTasksOnCalendar(
+  accessToken: string,
+  tasks: Task[],
+  workHours: WorkHours = DEFAULT_WORK_HOURS,
+): Promise<void> {
   const now = new Date()
   const searchEnd = new Date(now)
   searchEnd.setDate(searchEnd.getDate() + SEARCH_DAYS)
@@ -74,7 +93,7 @@ export async function scheduleTasksOnCalendar(accessToken: string, tasks: Task[]
   const bookedThisRun: BusyInterval[] = []
 
   for (const task of tasks) {
-    const slot = findNextFreeSlot([...busy, ...bookedThisRun], now, SLOT_MINUTES)
+    const slot = findNextFreeSlot([...busy, ...bookedThisRun], now, SLOT_MINUTES, workHours)
 
     const eventId = await createCalendarEvent(accessToken, {
       summary: task.title,

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { listUnscheduledTasks } from '@/services/firebase/tasks'
+import { getOrganization } from '@/services/firebase/organizations'
 import { connectGoogleCalendar, getCalendarAccessToken } from '@/services/google/auth'
-import { scheduleTasksOnCalendar } from '@/services/google/scheduler'
+import { scheduleTasksOnCalendar, hourFromTimeString, DEFAULT_WORK_HOURS, type WorkHours } from '@/services/google/scheduler'
 import { useAuthStore } from '@/store/auth.store'
 import { useCalendarStore } from '@/store/calendar.store'
 import { Card } from '@/components/ui/Card'
@@ -59,8 +60,17 @@ export function SchedulerPage() {
     setScheduling(true)
     setError('')
     try {
+      const org = await getOrganization(user.orgId)
+      const workHours: WorkHours = org
+        ? {
+            startHour: hourFromTimeString(org.settings.workDayStart),
+            endHour: hourFromTimeString(org.settings.workDayEnd),
+            workDays: org.settings.workDays,
+          }
+        : DEFAULT_WORK_HOURS
+
       const selectedTasks = tasks.filter(t => selected.has(t.taskId))
-      await scheduleTasksOnCalendar(accessToken, selectedTasks)
+      await scheduleTasksOnCalendar(accessToken, selectedTasks, workHours)
       setTasks(prev => prev.filter(t => !selected.has(t.taskId)))
       setSelected(new Set())
     } catch (err) {

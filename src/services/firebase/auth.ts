@@ -52,3 +52,10 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
   const orgId = await createOrganization(firebaseUser.uid, `${newUser.displayName || 'My'}'s Workspace`, '')
   return { ...(await getDoc(ref)).data(), orgId } as User
 }
+
+export async function updateUserProfile(
+  uid: string,
+  updates: Partial<Pick<User, 'displayName' | 'timezone'>>,
+): Promise<void> {
+  await setDoc(doc(db, 'users', uid), updates, { merge: true })
+}

@@ -8,6 +8,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/scheduler': 'Smart Scheduler',
   '/dashboard': 'Dashboard',
   '/search':    'Search',
+  '/settings':  'Settings',
 }
 
 export function AppLayout() {
