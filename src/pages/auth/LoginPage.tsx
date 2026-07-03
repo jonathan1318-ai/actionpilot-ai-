@@ -14,8 +14,8 @@ export function LoginPage() {
     try {
       await signInWithGoogle()
       navigate('/meetings')
-    } catch {
-      setError('Sign-in failed. Please try again.')
+    } catch (err) {
+      setError((err as Error).message || 'Sign-in failed. Please try again.')
     } finally {
       setLoading(false)
     }
