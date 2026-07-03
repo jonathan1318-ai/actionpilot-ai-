@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button'
 import { TranscriptUploader } from '@/components/meetings/TranscriptUploader'
 import { MicDictation } from '@/components/meetings/MicDictation'
 import { AudioCapture } from '@/components/meetings/AudioCapture'
+import { LANGUAGE_OPTIONS, type TranscriptLanguage } from '@/utils/language'
 
 export function NewMeetingPage() {
   const navigate = useNavigate()
@@ -16,6 +17,7 @@ export function NewMeetingPage() {
   const [title, setTitle] = useState('')
   const [transcript, setTranscript] = useState('')
   const [duration, setDuration] = useState(30)
+  const [language, setLanguage] = useState<TranscriptLanguage>('en')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -64,10 +66,19 @@ export function NewMeetingPage() {
         <div className="flex flex-col gap-2">
           <div className="flex items-start justify-between gap-3">
             <label className="pt-1.5 text-sm font-medium text-gray-700">Transcript</label>
-            <div className="flex flex-wrap items-start justify-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <select
+                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-gray-700 outline-none focus:border-brand-500"
+                value={language}
+                onChange={e => setLanguage(e.target.value as TranscriptLanguage)}
+              >
+                {LANGUAGE_OPTIONS.map(opt => (
+                  <option key={opt.code} value={opt.code}>{opt.label}</option>
+                ))}
+              </select>
               <TranscriptUploader onText={setTranscript} />
-              <MicDictation onResult={appendTranscript} />
-              <AudioCapture onText={appendTranscript} />
+              <MicDictation onResult={appendTranscript} language={language} />
+              <AudioCapture onText={appendTranscript} language={language} />
             </div>
           </div>
           <textarea

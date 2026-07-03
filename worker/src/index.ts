@@ -4,7 +4,7 @@ export interface Env {
 }
 
 const TEXT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
-const WHISPER_MODEL = '@cf/openai/whisper'
+const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo'
 
 function corsHeaders(env: Env): HeadersInit {
   return {
@@ -55,15 +55,24 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
   }
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary)
+}
+
 async function handleTranscribe(request: Request, env: Env): Promise<Response> {
   const buffer = await request.arrayBuffer()
   if (buffer.byteLength === 0) {
     return json({ error: 'Request body must contain audio bytes' }, 400, env)
   }
 
+  const language = new URL(request.url).searchParams.get('language') || 'en'
+
   try {
-    const audio = [...new Uint8Array(buffer)]
-    const result = await env.AI.run(WHISPER_MODEL, { audio })
+    const audio = arrayBufferToBase64(buffer)
+    const result = await env.AI.run(WHISPER_MODEL, { audio, language })
     const text = result && typeof result === 'object' && 'text' in result
       ? String((result as { text?: string }).text ?? '')
       : ''

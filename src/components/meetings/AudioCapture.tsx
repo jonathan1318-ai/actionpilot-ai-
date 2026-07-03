@@ -1,12 +1,14 @@
 import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { transcribeAudio } from '@/services/ai/transcribe'
+import type { TranscriptLanguage } from '@/utils/language'
 
 interface Props {
   onText: (text: string) => void
+  language: TranscriptLanguage
 }
 
-export function AudioCapture({ onText }: Props) {
+export function AudioCapture({ onText, language }: Props) {
   const [recording, setRecording] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -18,7 +20,7 @@ export function AudioCapture({ onText }: Props) {
     setLoading(true)
     setError('')
     try {
-      const text = await transcribeAudio(blob)
+      const text = await transcribeAudio(blob, language)
       if (text.trim()) onText(text.trim())
     } catch (err) {
       setError((err as Error).message || 'Transcription failed')
