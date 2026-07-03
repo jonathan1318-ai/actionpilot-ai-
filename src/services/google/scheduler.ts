@@ -80,29 +80,51 @@ function findNextFreeSlot(
   throw new Error('No free slot found in the next 14 days')
 }
 
-export async function scheduleTasksOnCalendar(
+export interface ScheduleProposal {
+  taskId: string
+  title: string
+  description: string
+  start: Date
+  end: Date
+}
+
+export async function proposeSchedule(
   accessToken: string,
   tasks: Task[],
   workHours: WorkHours = DEFAULT_WORK_HOURS,
-): Promise<void> {
+): Promise<ScheduleProposal[]> {
   const now = new Date()
   const searchEnd = new Date(now)
   searchEnd.setDate(searchEnd.getDate() + SEARCH_DAYS)
 
   const busy = await listBusyIntervals(accessToken, now.toISOString(), searchEnd.toISOString())
   const bookedThisRun: BusyInterval[] = []
+  const proposals: ScheduleProposal[] = []
 
   for (const task of tasks) {
     const slot = findNextFreeSlot([...busy, ...bookedThisRun], now, SLOT_MINUTES, workHours)
-
-    const eventId = await createCalendarEvent(accessToken, {
-      summary: task.title,
+    bookedThisRun.push(slot)
+    proposals.push({
+      taskId: task.taskId,
+      title: task.title,
       description: task.description || 'Scheduled by ActionPilot AI',
-      startISO: slot.start.toISOString(),
-      endISO: slot.end.toISOString(),
+      start: slot.start,
+      end: slot.end,
+    })
+  }
+
+  return proposals
+}
+
+export async function confirmSchedule(accessToken: string, proposals: ScheduleProposal[]): Promise<void> {
+  for (const proposal of proposals) {
+    const eventId = await createCalendarEvent(accessToken, {
+      summary: proposal.title,
+      description: proposal.description,
+      startISO: proposal.start.toISOString(),
+      endISO: proposal.end.toISOString(),
     })
 
-    bookedThisRun.push(slot)
-    await scheduleTask(task.taskId, Timestamp.fromDate(slot.start), Timestamp.fromDate(slot.end), eventId)
+    await scheduleTask(proposal.taskId, Timestamp.fromDate(proposal.start), Timestamp.fromDate(proposal.end), eventId)
   }
 }

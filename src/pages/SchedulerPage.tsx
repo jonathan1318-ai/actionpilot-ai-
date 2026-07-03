@@ -2,13 +2,21 @@ import { useEffect, useState } from 'react'
 import { listUnscheduledTasks } from '@/services/firebase/tasks'
 import { getOrganization } from '@/services/firebase/organizations'
 import { connectGoogleCalendar, getCalendarAccessToken } from '@/services/google/auth'
-import { scheduleTasksOnCalendar, hourFromTimeString, DEFAULT_WORK_HOURS, type WorkHours } from '@/services/google/scheduler'
+import {
+  proposeSchedule,
+  confirmSchedule,
+  hourFromTimeString,
+  DEFAULT_WORK_HOURS,
+  type WorkHours,
+  type ScheduleProposal,
+} from '@/services/google/scheduler'
 import { useAuthStore } from '@/store/auth.store'
 import { useCalendarStore } from '@/store/calendar.store'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { Badge } from '@/components/ui/Badge'
+import { ScheduleConfirmDialog } from '@/components/scheduler/ScheduleConfirmDialog'
 import { PRIORITY_COLORS } from '@/utils/task'
 import { formatDate } from '@/utils/date'
 import type { Task } from '@/types'
@@ -18,10 +26,13 @@ export function SchedulerPage() {
   const connected = useCalendarStore(s => s.isConnected())
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
-  const [scheduling, setScheduling] = useState(false)
+  const [proposing, setProposing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [proposals, setProposals] = useState<ScheduleProposal[] | null>(null)
   const [error, setError] = useState('')
+  const [dialogError, setDialogError] = useState('')
 
   useEffect(() => {
     if (!user) return
@@ -50,14 +61,14 @@ export function SchedulerPage() {
     }
   }
 
-  async function handleSchedule() {
+  async function handlePropose() {
     if (!user || selected.size === 0) return
     const accessToken = getCalendarAccessToken()
     if (!accessToken) {
       setError('Google Calendar connection expired. Please reconnect.')
       return
     }
-    setScheduling(true)
+    setProposing(true)
     setError('')
     try {
       const org = await getOrganization(user.orgId)
@@ -70,13 +81,33 @@ export function SchedulerPage() {
         : DEFAULT_WORK_HOURS
 
       const selectedTasks = tasks.filter(t => selected.has(t.taskId))
-      await scheduleTasksOnCalendar(accessToken, selectedTasks, workHours)
-      setTasks(prev => prev.filter(t => !selected.has(t.taskId)))
-      setSelected(new Set())
+      const proposed = await proposeSchedule(accessToken, selectedTasks, workHours)
+      setProposals(proposed)
     } catch (err) {
-      setError((err as Error).message || 'Failed to schedule tasks')
+      setError((err as Error).message || 'Failed to propose a schedule')
     } finally {
-      setScheduling(false)
+      setProposing(false)
+    }
+  }
+
+  async function handleConfirm(edited: ScheduleProposal[]) {
+    const accessToken = getCalendarAccessToken()
+    if (!accessToken) {
+      setDialogError('Google Calendar connection expired. Please reconnect.')
+      return
+    }
+    setConfirming(true)
+    setDialogError('')
+    try {
+      await confirmSchedule(accessToken, edited)
+      const scheduledIds = new Set(edited.map(p => p.taskId))
+      setTasks(prev => prev.filter(t => !scheduledIds.has(t.taskId)))
+      setSelected(new Set())
+      setProposals(null)
+    } catch (err) {
+      setDialogError((err as Error).message || 'Failed to book the calendar events')
+    } finally {
+      setConfirming(false)
     }
   }
 
@@ -90,7 +121,7 @@ export function SchedulerPage() {
           <p className="mt-0.5 text-xs text-gray-400">Select tasks to book focus time on your calendar.</p>
         </div>
         {connected ? (
-          <Button onClick={handleSchedule} loading={scheduling} disabled={selected.size === 0}>
+          <Button onClick={handlePropose} loading={proposing} disabled={selected.size === 0}>
             Schedule {selected.size > 0 ? `(${selected.size})` : ''}
           </Button>
         ) : (
@@ -122,6 +153,16 @@ export function SchedulerPage() {
           </div>
         </Card>
       ))}
+
+      {proposals && (
+        <ScheduleConfirmDialog
+          proposals={proposals}
+          onCancel={() => { setProposals(null); setDialogError('') }}
+          onConfirm={handleConfirm}
+          confirming={confirming}
+          error={dialogError}
+        />
+      )}
     </div>
   )
 }
