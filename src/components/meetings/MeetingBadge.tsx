@@ -13,7 +13,7 @@ function initials(title: string): string {
 
 export function MeetingBadge({ title }: Props) {
   return (
-    <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${colorForSeed(title)}`}>
+    <span className={`inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl text-[13px] font-bold ${colorForSeed(title)}`}>
       {initials(title)}
     </span>
   )

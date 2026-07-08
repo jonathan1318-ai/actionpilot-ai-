@@ -7,13 +7,13 @@ interface Props extends InputHTMLAttributes<HTMLInputElement> {
 
 export function Input({ label, error, className = '', ...rest }: Props) {
   return (
-    <div className="flex flex-col gap-1">
-      {label && <label className="text-sm font-medium text-gray-700">{label}</label>}
+    <div className="flex flex-col gap-1.5">
+      {label && <label className="text-[13px] font-semibold text-ap-text-secondary">{label}</label>}
       <input
         {...rest}
-        className={`rounded-lg border px-3 py-2 text-sm outline-none transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-100 ${error ? 'border-red-400' : 'border-gray-300'} ${className}`}
+        className={`rounded-xl border bg-ap-surface-alt px-3.5 py-3 text-sm text-ap-text-primary outline-none transition-colors placeholder:text-ap-text-tertiary focus:border-ap-accent focus:ring-2 focus:ring-ap-accent-soft ${error ? 'border-red-400' : 'border-ap-border'} ${className}`}
       />
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {error && <p className="text-xs text-red-500">{error}</p>}
     </div>
   )
 }

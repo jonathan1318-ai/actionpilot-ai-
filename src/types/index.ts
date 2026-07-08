@@ -1,4 +1,4 @@
-export type { User, UserRole } from './user'
+export type { User, UserRole, NotificationPrefs } from './user'
 export type { Organization, OrgPlan, OrgSettings } from './organization'
 export type { Meeting, MeetingPlatform, MeetingStatus } from './meeting'
 export type { Task, TaskStatus, TaskPriority, TaskPriorityLabel } from './task'

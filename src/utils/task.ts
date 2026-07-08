@@ -1,18 +1,25 @@
 import type { TaskPriority, TaskPriorityLabel, TaskStatus } from '@/types'
 
+export const PRIORITY_LABELS: Record<TaskPriorityLabel, string> = {
+  critical: 'Urgent',
+  high:     'High',
+  medium:   'Medium',
+  low:      'Low',
+}
+
 export const PRIORITY_COLORS: Record<TaskPriorityLabel, string> = {
-  critical: 'bg-red-100 text-red-700',
-  high:     'bg-orange-100 text-orange-700',
-  medium:   'bg-yellow-100 text-yellow-700',
-  low:      'bg-gray-100 text-gray-600',
+  critical: 'bg-red-500/12 text-red-600 dark:text-red-400',
+  high:     'bg-amber-500/12 text-amber-600 dark:text-amber-400',
+  medium:   'bg-ap-accent-soft text-ap-accent',
+  low:      'bg-ap-text-tertiary/12 text-ap-text-secondary',
 }
 
 export const STATUS_COLORS: Record<TaskStatus, string> = {
-  todo:        'bg-gray-100 text-gray-600',
-  in_progress: 'bg-blue-100 text-blue-700',
-  completed:   'bg-green-100 text-green-700',
-  overdue:     'bg-red-100 text-red-700',
-  cancelled:   'bg-gray-100 text-gray-400',
+  todo:        'bg-ap-text-tertiary/12 text-ap-text-secondary',
+  in_progress: 'bg-blue-500/12 text-blue-600 dark:text-blue-400',
+  completed:   'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400',
+  overdue:     'bg-red-500/12 text-red-600 dark:text-red-400',
+  cancelled:   'bg-ap-text-tertiary/12 text-ap-text-tertiary',
 }
 
 export function priorityFromNumber(p: TaskPriority): TaskPriorityLabel {

@@ -1,5 +1,4 @@
 import { useRef } from 'react'
-import { Button } from '@/components/ui/Button'
 
 interface Props {
   onText: (text: string) => void
@@ -19,9 +18,14 @@ export function TranscriptUploader({ onText }: Props) {
   return (
     <div>
       <input ref={fileRef} type="file" accept=".txt,.md" className="hidden" onChange={handleFile} />
-      <Button type="button" variant="secondary" size="sm" onClick={() => fileRef.current?.click()}>
-        Upload .txt transcript
-      </Button>
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        className="flex items-center justify-center gap-2 rounded-xl border border-ap-border bg-ap-surface px-3 py-[11px] text-[12.5px] font-semibold text-ap-text-primary"
+      >
+        <span className="h-[9px] w-[9px] rounded-full bg-ap-text-tertiary" />
+        Upload .txt file
+      </button>
     </div>
   )
 }

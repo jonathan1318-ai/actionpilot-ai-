@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/Button'
 import { Spinner } from '@/components/ui/Spinner'
 import { Badge } from '@/components/ui/Badge'
 import { ScheduleConfirmDialog } from '@/components/scheduler/ScheduleConfirmDialog'
-import { PRIORITY_COLORS } from '@/utils/task'
+import { PRIORITY_COLORS, PRIORITY_LABELS } from '@/utils/task'
 import { formatDate } from '@/utils/date'
 import type { Task } from '@/types'
 
@@ -114,45 +114,54 @@ export function SchedulerPage() {
   if (loading) return <div className="flex justify-center pt-20"><Spinner size="lg" /></div>
 
   return (
-    <div className="max-w-2xl space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-[720px]">
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="font-semibold text-gray-900">Unscheduled tasks</h2>
-          <p className="mt-0.5 text-xs text-gray-400">Select tasks to book focus time on your calendar.</p>
+          <h2 className="text-[15.5px] font-bold text-ap-text-primary">Unscheduled tasks</h2>
+          <p className="mt-1 text-[12.5px] text-ap-text-tertiary">Select tasks to book focus time on your calendar.</p>
         </div>
         {connected ? (
           <Button onClick={handlePropose} loading={proposing} disabled={selected.size === 0}>
-            Schedule {selected.size > 0 ? `(${selected.size})` : ''}
+            Schedule{selected.size > 0 ? ` (${selected.size})` : ''}
           </Button>
         ) : (
-          <Button onClick={handleConnect} loading={connecting} variant="secondary">
+          <Button onClick={handleConnect} loading={connecting} variant="secondary" className="whitespace-nowrap">
             Connect Google Calendar
           </Button>
         )}
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
 
-      {tasks.length === 0 && (
-        <Card className="py-16 text-center text-gray-400">All tasks are scheduled.</Card>
-      )}
+      <div className="mt-[18px] flex flex-col gap-2.5">
+        {tasks.length === 0 && (
+          <Card className="py-16 text-center text-ap-text-tertiary">All tasks are scheduled.</Card>
+        )}
 
-      {tasks.map(task => (
-        <Card
-          key={task.taskId}
-          className={`cursor-pointer p-4 transition-all ${selected.has(task.taskId) ? 'ring-2 ring-brand-500' : ''}`}
-          onClick={() => toggle(task.taskId)}
-        >
-          <div className="flex items-center gap-3">
-            <input type="checkbox" readOnly checked={selected.has(task.taskId)} className="h-4 w-4 accent-brand-600" />
-            <div className="flex-1">
-              <p className="font-medium text-gray-900">{task.title}</p>
-              <p className="text-xs text-gray-400">Due {formatDate(task.dueDate)}</p>
+        {tasks.map(task => {
+          const isSelected = selected.has(task.taskId)
+          return (
+            <div
+              key={task.taskId}
+              onClick={() => toggle(task.taskId)}
+              className={`flex cursor-pointer items-center gap-3.5 rounded-2xl border bg-ap-surface px-4 py-3.5 transition-shadow ${
+                isSelected ? 'border-ap-accent shadow-[0_0_0_1px_var(--ap-accent)]' : 'border-ap-border'
+              }`}
+            >
+              <span
+                className={`h-[18px] w-[18px] shrink-0 rounded-[6px] border-2 ${
+                  isSelected ? 'border-ap-accent bg-ap-accent' : 'border-ap-border bg-transparent'
+                }`}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-ap-text-primary">{task.title}</p>
+                <p className="text-xs text-ap-text-tertiary">Due {formatDate(task.dueDate)}</p>
+              </div>
+              <Badge label={PRIORITY_LABELS[task.priorityLabel]} className={PRIORITY_COLORS[task.priorityLabel]} />
             </div>
-            <Badge label={task.priorityLabel} className={PRIORITY_COLORS[task.priorityLabel]} />
-          </div>
-        </Card>
-      ))}
+          )
+        })}
+      </div>
 
       {proposals && (
         <ScheduleConfirmDialog

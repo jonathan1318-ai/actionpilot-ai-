@@ -15,6 +15,8 @@ type DurationUnit = 'minutes' | 'hours' | 'days'
 
 const UNIT_MINUTES: Record<DurationUnit, number> = { minutes: 1, hours: 60, days: 1440 }
 
+const inputClass = 'rounded-lg border border-ap-border bg-ap-surface-alt px-2 py-1.5 text-sm text-ap-text-primary outline-none focus:border-ap-accent'
+
 interface Row {
   taskId: string
   title: string
@@ -100,38 +102,38 @@ export function ScheduleConfirmDialog({ proposals, onCancel, onConfirm, confirmi
         </>
       }
     >
-      <div className="space-y-4">
-        {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="space-y-3">
+        {error && <p className="text-sm text-red-500">{error}</p>}
         {rows.map((row, i) => (
-          <div key={row.taskId} className="rounded-lg border border-gray-200 p-3">
-            <p className="mb-2 text-sm font-medium text-gray-900">{row.title}</p>
+          <div key={row.taskId} className="rounded-xl border border-ap-border bg-ap-surface-alt p-3">
+            <p className="mb-2 text-sm font-semibold text-ap-text-primary">{row.title}</p>
             <div className="grid grid-cols-2 gap-2">
               <input
                 type="date"
                 value={toDateInputValue(row.start)}
                 onChange={e => updateStart(i, e.target.value, toTimeInputValue(row.start))}
-                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500"
+                className={inputClass}
               />
               <input
                 type="time"
                 value={toTimeInputValue(row.start)}
                 onChange={e => updateStart(i, toDateInputValue(row.start), e.target.value)}
-                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500"
+                className={inputClass}
               />
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <span className="text-xs text-gray-500">Duration:</span>
+              <span className="text-xs text-ap-text-tertiary">Duration:</span>
               <input
                 type="number"
                 min={1}
                 value={row.durationAmount}
                 onChange={e => updateDurationAmount(i, Number(e.target.value))}
-                className="w-20 rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500"
+                className={`w-20 ${inputClass}`}
               />
               <select
                 value={row.durationUnit}
                 onChange={e => updateDurationUnit(i, e.target.value as DurationUnit)}
-                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500"
+                className={inputClass}
               >
                 <option value="minutes">Minutes</option>
                 <option value="hours">Hours</option>
