@@ -234,4 +234,3 @@ git commit --amend --no-edit --reset-author        # for the tip commit
 # or, for multiple earlier commits:
 git rebase --exec "git commit --amend --no-edit --reset-author" origin/main
 ```
-
