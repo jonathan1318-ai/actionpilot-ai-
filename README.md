@@ -174,3 +174,64 @@ Industry Trends
      ![1782729603550](image/README/1782729603550.png)
      **
 
+---
+
+## Troubleshooting / Known Issues Log
+
+Problems hit during development, kept here so they're fast to recognize if they recur.
+
+### "Sign-in failed" with no useful detail
+**Symptom:** Google sign-in popup closes, generic error shown.
+**Cause:** `LoginPage.tsx` was swallowing the real Firebase Auth error and always showing a hardcoded message.
+**Fix:** Always surface `(err as Error).message` in the UI instead of a generic string — the real Firebase error code (`auth/popup-blocked`, `auth/unauthorized-domain`, `auth/network-request-failed`, etc.) tells you exactly what's wrong. Check for a blocked-popup icon in the address bar first.
+
+### Dashboard stuck showing "No data yet." with no error
+**Symptom:** Page loads, shows the empty state, no console error.
+**Cause:** `Promise.all([...]).then(...).finally(...)` with no `.catch()` — a Firestore "missing composite index" error was silently swallowed as an unhandled rejection.
+**Fix:** Always add `.catch()` to data-loading promise chains, even ones that "shouldn't" fail. Add any missing composite index to `firestore.indexes.json` and run `firebase deploy --only firestore:indexes`.
+
+### Meetings/Tasks/Dashboard queries return nothing, no error at all
+**Symptom:** Data exists in Firestore (visible in the console) but never appears in the app.
+**Cause:** Every org-scoped hook guarded with `if (!orgId) return`. An **empty string is falsy in JS**, so when a user's `orgId` was `""` (new users were never forced through onboarding), the fetch silently no-op'd before ever reaching Firestore.
+**Fix:** `getOrCreateUserDoc()` now auto-provisions an organization for any user with an empty `orgId`, on every sign-in/session-restore — not just first-time signup. Watch out for this falsy-empty-string trap in any future `if (!someId)` guard.
+
+### Gemini/Workers AI returns `"[object Object]" is not valid JSON`
+**Cause:** The Cloudflare Worker did `String(result.response)` on a Workers AI response where `.response` was itself an object, not a string — producing the literal 9-character string `"[object Object]"` which then failed `JSON.parse` downstream.
+**Fix:** Check `typeof response === 'string'` before using it directly; `JSON.stringify()` it instead of `String()`-coercing if it's an object, so the round-trip stays valid JSON.
+
+### Cloudflare Worker: secret set but still "API key not valid" locally
+**Cause:** `wrangler secret put KEY` only sets the secret for the **deployed/remote** Worker. Local `wrangler dev` (Miniflare) doesn't see it at all — it reads a separate `worker/.dev.vars` file instead.
+**Fix:** For local dev, put secrets in `worker/.dev.vars` (gitignored). `wrangler secret put` is still needed before `npm run deploy` for production.
+*(No longer applies to Workers AI — we since switched off Gemini's paid API entirely in favor of Workers AI, which needs no key at all.)*
+
+### Google Calendar: `ACCESS_TOKEN_SCOPE_INSUFFICIENT` on freeBusy.query
+**Cause:** Requested only the `calendar.events` OAuth scope, which covers creating/editing events but **not** the `freeBusy.query` endpoint used to check availability.
+**Fix:** Request the broader `https://www.googleapis.com/auth/calendar` scope instead.
+
+### Whisper transcription always in the wrong language
+**Cause:** `@cf/openai/whisper` (the first model used) is English-only and takes `audio` as a raw byte array with no `language` parameter at all.
+**Fix:** Switched to `@cf/openai/whisper-large-v3-turbo`, which is multilingual, accepts an explicit `language` param, and expects `audio` as a **base64 string**, not a byte array — different input shape entirely, not just an added field.
+
+### `git push` fails with `Permission ... denied to <account>` (403)
+**Cause:** The GitHub account your local git credentials are authenticated as does not have write access to the repo — e.g. Windows Credential Manager has a token for the wrong GitHub account.
+**Fix:** Check `Credential Manager → Windows Credentials → git:https://github.com` and confirm it matches the account that actually owns/collaborates on the repo. Either add that account as a collaborator, or clear the stored credential and re-authenticate as the correct one.
+
+### Vite dev server crashes with `EBUSY: resource busy or locked` on Windows
+**Symptom:** Happens right after a new dependency is added (e.g. `zustand/middleware`) and Vite needs to re-optimize.
+**Cause:** Something (antivirus, OneDrive/Dropbox sync) is holding a lock on files inside `node_modules/.vite` while Vite tries to rewrite them.
+**Fix:** Stop the dev server, delete the `node_modules/.vite` cache folder, restart:
+```powershell
+Remove-Item -Recurse -Force node_modules\.vite
+npm run dev
+```
+
+### Commits show "Unverified" on GitHub
+**Cause:** Commit author/committer email didn't match `noreply@anthropic.com` when Claude made the commit.
+**Fix:**
+```bash
+git config user.email noreply@anthropic.com && git config user.name Claude
+git commit --amend --no-edit --reset-author        # for the tip commit
+# or, for multiple earlier commits:
+git rebase --exec "git commit --amend --no-edit --reset-author" origin/main
+```
+
