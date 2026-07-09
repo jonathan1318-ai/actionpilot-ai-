@@ -174,3 +174,9 @@ Industry Trends
      ![1782729603550](image/README/1782729603550.png)
      **
 
+npx wrangler login --api-key <YOUR_API_KEY> --account-id <YOUR_ACCOUNT_ID>
+![1783046483038](image/README/1783046483038.png)
+![1783046495275](image/README/1783046495275.png)
+![1783046506011](image/README/1783046506011.png)
+First time login 
+![1783054890558](image/README/1783054890558.png)

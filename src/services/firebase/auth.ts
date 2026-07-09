@@ -44,6 +44,7 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
     role:              'member',
     calendarConnected: false,
     timezone:          'Asia/Kuala_Lumpur',
+    notifPrefs:        { email: true, push: true, weeklyDigest: false },
     createdAt:         serverTimestamp(),
     lastActiveAt:      serverTimestamp(),
   }
@@ -55,7 +56,7 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
 
 export async function updateUserProfile(
   uid: string,
-  updates: Partial<Pick<User, 'displayName' | 'timezone'>>,
+  updates: Partial<Pick<User, 'displayName' | 'timezone' | 'notifPrefs'>>,
 ): Promise<void> {
   await setDoc(doc(db, 'users', uid), updates, { merge: true })
 }

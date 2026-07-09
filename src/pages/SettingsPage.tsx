@@ -1,12 +1,17 @@
 import { useEffect, useState } from 'react'
 import { useAuthStore } from '@/store/auth.store'
+import { useThemeStore } from '@/store/theme.store'
 import { updateUserProfile } from '@/services/firebase/auth'
 import { getOrganization, updateOrganizationSettings } from '@/services/firebase/organizations'
+import { connectGoogleCalendar } from '@/services/google/auth'
+import { useCalendarStore } from '@/store/calendar.store'
 import { Card } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { Avatar } from '@/components/ui/Avatar'
-import type { Organization } from '@/types'
+import { Badge } from '@/components/ui/Badge'
+import { ACCENTS, ACCENT_ORDER, ACCENT_LABELS } from '@/utils/theme'
+import type { NotificationPrefs, Organization } from '@/types'
 
 const TIMEZONES = [
   'Asia/Kuala_Lumpur',
@@ -30,9 +35,30 @@ const DAY_LABELS = [
   { value: 6, label: 'Sat' },
 ]
 
+const DEFAULT_NOTIF_PREFS: NotificationPrefs = { email: true, push: true, weeklyDigest: false }
+
+function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`relative h-6 w-10 shrink-0 rounded-full p-0.5 transition-colors ${on ? 'bg-ap-accent' : 'bg-ap-surface-alt'}`}
+    >
+      <span
+        className="block h-5 w-5 rounded-full bg-white shadow transition-transform"
+        style={{ transform: on ? 'translateX(16px)' : 'translateX(0)' }}
+      />
+    </button>
+  )
+}
+
 export function SettingsPage() {
   const user = useAuthStore(s => s.user)
   const setUser = useAuthStore(s => s.setUser)
+  const dark = useThemeStore(s => s.dark)
+  const accent = useThemeStore(s => s.accent)
+  const toggleDark = useThemeStore(s => s.toggleDark)
+  const setAccent = useThemeStore(s => s.setAccent)
+  const calendarConnected = useCalendarStore(s => s.isConnected())
 
   const [displayName, setDisplayName] = useState(user?.displayName ?? '')
   const [timezone, setTimezone] = useState(user?.timezone ?? 'Asia/Kuala_Lumpur')
@@ -46,6 +72,10 @@ export function SettingsPage() {
   const [workDays, setWorkDays] = useState<number[]>([1, 2, 3, 4, 5])
   const [savingOrg, setSavingOrg] = useState(false)
   const [orgSaved, setOrgSaved] = useState(false)
+
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>(user?.notifPrefs ?? DEFAULT_NOTIF_PREFS)
+  const [connecting, setConnecting] = useState(false)
+  const [connectError, setConnectError] = useState('')
 
   useEffect(() => {
     if (!user?.orgId) return
@@ -91,75 +121,176 @@ export function SettingsPage() {
     }
   }
 
+  async function handleToggleNotif(key: keyof NotificationPrefs) {
+    if (!user) return
+    const next = { ...notifPrefs, [key]: !notifPrefs[key] }
+    setNotifPrefs(next)
+    await updateUserProfile(user.uid, { notifPrefs: next })
+    setUser({ ...user, notifPrefs: next })
+  }
+
+  async function handleConnectCalendar() {
+    setConnecting(true)
+    setConnectError('')
+    try {
+      await connectGoogleCalendar()
+    } catch (err) {
+      setConnectError((err as Error).message || 'Failed to connect Google Calendar')
+    } finally {
+      setConnecting(false)
+    }
+  }
+
   if (!user) return null
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <Card className="p-6 space-y-4">
-        <h2 className="text-sm font-semibold text-gray-900">Your Profile</h2>
-        <div className="flex items-center gap-3">
-          <Avatar src={user.photoURL} name={user.displayName} size="lg" />
-          <p className="text-sm text-gray-400">{user.email}</p>
+    <div className="mx-auto flex max-w-[640px] flex-col gap-[18px]">
+      <Card>
+        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Your profile</h3>
+        <div className="mb-4 flex items-center gap-3">
+          <Avatar src={user.photoURL} name={user.displayName || user.email} size="lg" />
+          <p className="text-sm text-ap-text-tertiary">{user.email}</p>
         </div>
-        <Input label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
-        <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-gray-700">Timezone</label>
-          <select
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
-            value={timezone}
-            onChange={e => setTimezone(e.target.value)}
-          >
-            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
-          </select>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button onClick={handleSaveProfile} loading={savingProfile} disabled={!displayName.trim()}>
-            Save profile
-          </Button>
-          {profileSaved && <span className="text-xs text-green-600">Saved</span>}
+        <div className="flex flex-col gap-3.5">
+          <Input label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[13px] font-semibold text-ap-text-secondary">Timezone</label>
+            <select
+              className="rounded-xl border border-ap-border bg-ap-surface-alt px-3.5 py-3 text-sm text-ap-text-primary outline-none focus:border-ap-accent"
+              value={timezone}
+              onChange={e => setTimezone(e.target.value)}
+            >
+              {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button onClick={handleSaveProfile} loading={savingProfile} disabled={!displayName.trim()}>
+              Save profile
+            </Button>
+            {profileSaved && <span className="text-xs font-semibold text-emerald-600">Saved</span>}
+          </div>
         </div>
       </Card>
 
-      {org && (
-        <Card className="p-6 space-y-4">
-          <h2 className="text-sm font-semibold text-gray-900">Organization</h2>
+      <Card>
+        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Workspace</h3>
+        <div className="flex flex-col gap-3.5">
           <Input label="Organization name" value={orgName} onChange={e => setOrgName(e.target.value)} />
-
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="Work day start" type="time" value={workDayStart} onChange={e => setWorkDayStart(e.target.value)} />
-            <Input label="Work day end" type="time" value={workDayEnd} onChange={e => setWorkDayEnd(e.target.value)} />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-gray-700">Work days</label>
-            <div className="flex gap-1.5">
-              {DAY_LABELS.map(d => (
-                <button
-                  key={d.value}
-                  type="button"
-                  onClick={() => toggleDay(d.value)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                    workDays.includes(d.value)
-                      ? 'bg-brand-600 text-white'
-                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                  }`}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <p className="text-xs text-gray-400">These hours control when the Smart Scheduler books focus time.</p>
-
           <div className="flex items-center gap-3">
-            <Button onClick={handleSaveOrg} loading={savingOrg} disabled={!orgName.trim()}>
-              Save organization
-            </Button>
-            {orgSaved && <span className="text-xs text-green-600">Saved</span>}
+            <Button onClick={handleSaveOrg} loading={savingOrg} disabled={!orgName.trim()}>Save workspace</Button>
+            {orgSaved && <span className="text-xs font-semibold text-emerald-600">Saved</span>}
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Integrations</h3>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <span className={`h-[9px] w-[9px] shrink-0 rounded-full ${calendarConnected ? 'bg-[#34A853]' : 'bg-ap-text-tertiary'}`} />
+            <span className="flex-1 text-[13.5px] font-semibold text-ap-text-primary">Google Calendar</span>
+            {calendarConnected ? (
+              <Badge label="Connected" className="bg-emerald-500/14 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <Button size="sm" variant="secondary" onClick={handleConnectCalendar} loading={connecting}>Connect</Button>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="h-[9px] w-[9px] shrink-0 rounded-full bg-ap-text-tertiary" />
+            <span className="flex-1 text-[13.5px] font-semibold text-ap-text-primary">Zoom</span>
+            <Badge label="Not connected" className="bg-ap-surface-alt text-ap-text-tertiary" />
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="h-[9px] w-[9px] shrink-0 rounded-full bg-ap-text-tertiary" />
+            <span className="flex-1 text-[13.5px] font-semibold text-ap-text-primary">Microsoft 365</span>
+            <Badge label="Not connected" className="bg-ap-surface-alt text-ap-text-tertiary" />
+          </div>
+        </div>
+        {connectError && <p className="mt-3 text-xs text-red-500">{connectError}</p>}
+      </Card>
+
+      {org && (
+        <Card>
+          <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Working hours</h3>
+          <div className="flex flex-col gap-3.5">
+            <div className="grid grid-cols-2 gap-3">
+              <Input label="Work day start" type="time" value={workDayStart} onChange={e => setWorkDayStart(e.target.value)} />
+              <Input label="Work day end" type="time" value={workDayEnd} onChange={e => setWorkDayEnd(e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[13px] font-semibold text-ap-text-secondary">Work days</label>
+              <div className="flex gap-1.5">
+                {DAY_LABELS.map(d => (
+                  <button
+                    key={d.value}
+                    type="button"
+                    onClick={() => toggleDay(d.value)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      workDays.includes(d.value)
+                        ? 'bg-ap-accent text-white'
+                        : 'bg-ap-surface-alt text-ap-text-secondary'
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-ap-text-tertiary">These hours control when the Smart Scheduler books focus time.</p>
+            <div className="flex items-center gap-3">
+              <Button onClick={handleSaveOrg} loading={savingOrg} disabled={!orgName.trim()}>Save workspace</Button>
+              {orgSaved && <span className="text-xs font-semibold text-emerald-600">Saved</span>}
+            </div>
           </div>
         </Card>
       )}
+
+      <Card>
+        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Appearance</h3>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[13.5px] text-ap-text-primary">Dark mode</span>
+            <Toggle on={dark} onToggle={toggleDark} />
+          </div>
+          <div>
+            <label className="mb-2 block text-[13px] font-semibold text-ap-text-secondary">Accent color</label>
+            <div className="flex gap-2.5">
+              {ACCENT_ORDER.map(key => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-label={ACCENT_LABELS[key]}
+                  onClick={() => setAccent(key)}
+                  className="h-8 w-8 rounded-full transition-transform"
+                  style={{
+                    background: ACCENTS[key].base,
+                    outline: accent === key ? `2px solid ${ACCENTS[key].base}` : 'none',
+                    outlineOffset: 2,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <h3 className="mb-1 text-[13.5px] font-bold text-ap-text-primary">Notifications</h3>
+        <div className="mt-3 flex flex-col gap-3.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[13.5px] text-ap-text-primary">Email digests</span>
+            <Toggle on={notifPrefs.email} onToggle={() => handleToggleNotif('email')} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[13.5px] text-ap-text-primary">Push notifications</span>
+            <Toggle on={notifPrefs.push} onToggle={() => handleToggleNotif('push')} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[13.5px] text-ap-text-primary">Weekly accountability report</span>
+            <Toggle on={notifPrefs.weeklyDigest} onToggle={() => handleToggleNotif('weeklyDigest')} />
+          </div>
+        </div>
+      </Card>
     </div>
   )
 }

@@ -1,0 +1,2450 @@
+From ae66f0ad9dbe4331811607382851687d3c2497fd Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 8 Jul 2026 07:33:35 +0000
+Subject: [PATCH] Apply Apple-style ActionPilot AI redesign from Claude Design
+
+Implements the design exported from Claude Design (indigo-accent, neutral
+Apple-like palette, translucent sidebar, dark mode toggle) across the whole
+app while preserving all existing Firebase/Gemini/Calendar functionality.
+
+- Theme system: CSS custom properties for light/dark + 4 selectable accent
+  colors, persisted zustand store, Tailwind tokens wired to the variables
+- Reskinned all UI primitives (Button, Card, Badge, Input, Avatar, Modal)
+  and layout (Sidebar with real nav icons + dark toggle, Topbar)
+- Login/Onboarding: matches the prototype's card treatment; onboarding is
+  now a real 2-step flow (workspace name -> working hours) that persists
+  org.settings.workDayStart/End on finish
+- Meeting detail: switched from tabs to the design's 2-column layout
+  (summary+transcript / extracted tasks) with the floating Ask AI bar
+- New meeting: circular record button + waveform as the primary capture
+  affordance, with upload/dictation/upload-audio as source chips
+  (extracted MediaRecorder logic into useAudioRecorder hook)
+- Tasks: added client-side filter pills (All/To do/In progress/Completed)
+- Scheduler, Dashboard, Search, Settings restyled to match; Settings gained
+  a real Integrations section (Google Calendar connection status) and a
+  working Notifications section backed by a new User.notifPrefs field
+- Removed now-unused TaskInlineRow after the meeting-detail redesign
+
+Omitted the design's "weekly trend" dashboard chart since there's no
+backing historical data source (analytics is all-time only) - didn't want
+to fabricate data for it.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QaX7wf4gXGp2WVaEF1rxtM
+---
+ src/components/layout/AppLayout.tsx           |  14 +-
+ src/components/layout/AuthLayout.tsx          |   2 +-
+ src/components/layout/Sidebar.tsx             | 117 +++++++--
+ src/components/layout/Topbar.tsx              |  23 +-
+ src/components/meetings/AskAiBar.tsx          |  29 ++-
+ src/components/meetings/AudioCapture.tsx      |  72 ++----
+ src/components/meetings/MeetingBadge.tsx      |   2 +-
+ src/components/meetings/MicDictation.tsx      |  16 +-
+ .../meetings/TranscriptUploader.tsx           |  12 +-
+ .../scheduler/ScheduleConfirmDialog.tsx       |  16 +-
+ src/components/tasks/TaskInlineRow.tsx        |  36 ---
+ src/components/ui/Avatar.tsx                  |   4 +-
+ src/components/ui/Badge.tsx                   |   2 +-
+ src/components/ui/Button.tsx                  |  14 +-
+ src/components/ui/Card.tsx                    |   2 +-
+ src/components/ui/Input.tsx                   |   8 +-
+ src/components/ui/Modal.tsx                   |  10 +-
+ src/components/ui/Spinner.tsx                 |   2 +-
+ src/hooks/useAudioRecorder.ts                 |  56 +++++
+ src/index.css                                 |  45 +++-
+ src/main.tsx                                  |   3 +
+ src/pages/DashboardPage.tsx                   |  40 +--
+ src/pages/MeetingDetailPage.tsx               | 162 ++++++------
+ src/pages/MeetingsPage.tsx                    |  40 ++-
+ src/pages/NewMeetingPage.tsx                  | 123 ++++++---
+ src/pages/SchedulerPage.tsx                   |  61 +++--
+ src/pages/SearchPage.tsx                      |  46 ++--
+ src/pages/SettingsPage.tsx                    | 235 ++++++++++++++----
+ src/pages/TasksPage.tsx                       |  94 ++++---
+ src/pages/auth/LoginPage.tsx                  |  37 ++-
+ src/pages/auth/OnboardingPage.tsx             |  94 +++++--
+ src/services/firebase/auth.ts                 |   3 +-
+ src/store/theme.store.ts                      |  40 +++
+ src/types/index.ts                            |   2 +-
+ src/types/user.ts                             |   7 +
+ src/utils/avatarColor.ts                      |  12 +-
+ src/utils/status.ts                           |  17 ++
+ src/utils/task.ts                             |  25 +-
+ src/utils/theme.ts                            |  32 +++
+ tailwind.config.ts                            |  33 ++-
+ 40 files changed, 1081 insertions(+), 507 deletions(-)
+ delete mode 100644 src/components/tasks/TaskInlineRow.tsx
+ create mode 100644 src/hooks/useAudioRecorder.ts
+ create mode 100644 src/store/theme.store.ts
+ create mode 100644 src/utils/status.ts
+ create mode 100644 src/utils/theme.ts
+
+diff --git a/src/components/layout/AppLayout.tsx b/src/components/layout/AppLayout.tsx
+index cb65009..f7a41b9 100644
+--- a/src/components/layout/AppLayout.tsx
++++ b/src/components/layout/AppLayout.tsx
+@@ -13,15 +13,19 @@ const PAGE_TITLES: Record<string, string> = {
+ 
+ export function AppLayout() {
+   const { pathname } = useLocation()
+-  const base = '/' + pathname.split('/')[1]
+-  const title = PAGE_TITLES[base] ?? 'ActionPilot AI'
++  const segments = pathname.split('/').filter(Boolean)
++  const base = '/' + (segments[0] ?? '')
++
++  let title = PAGE_TITLES[base] ?? 'ActionPilot AI'
++  if (base === '/meetings' && segments[1] === 'new') title = 'New Meeting'
++  else if (base === '/meetings' && segments[1]) title = 'Meeting'
+ 
+   return (
+-    <div className="flex h-screen overflow-hidden bg-gray-50">
++    <div className="flex h-screen overflow-hidden bg-ap-bg">
+       <Sidebar />
+-      <div className="flex flex-1 flex-col overflow-hidden">
++      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+         <Topbar title={title} />
+-        <main className="flex-1 overflow-y-auto p-6">
++        <main className="flex-1 overflow-y-auto px-8 pb-[60px] pt-7">
+           <Outlet />
+         </main>
+       </div>
+diff --git a/src/components/layout/AuthLayout.tsx b/src/components/layout/AuthLayout.tsx
+index 33a4f2f..751c37f 100644
+--- a/src/components/layout/AuthLayout.tsx
++++ b/src/components/layout/AuthLayout.tsx
+@@ -2,7 +2,7 @@ import { Outlet } from 'react-router-dom'
+ 
+ export function AuthLayout() {
+   return (
+-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
++    <div className="flex min-h-screen items-center justify-center bg-ap-bg">
+       <Outlet />
+     </div>
+   )
+diff --git a/src/components/layout/Sidebar.tsx b/src/components/layout/Sidebar.tsx
+index ead9204..9f05e47 100644
+--- a/src/components/layout/Sidebar.tsx
++++ b/src/components/layout/Sidebar.tsx
+@@ -1,38 +1,111 @@
++import { useEffect, useState } from 'react'
+ import { NavLink } from 'react-router-dom'
++import { useAuthStore } from '@/store/auth.store'
++import { useThemeStore } from '@/store/theme.store'
++import { getOrganization } from '@/services/firebase/organizations'
++import { Avatar } from '@/components/ui/Avatar'
+ 
+ const navItems = [
+-  { to: '/meetings',  label: 'Meetings',   icon: '🎙' },
+-  { to: '/tasks',     label: 'Tasks',      icon: '✅' },
+-  { to: '/scheduler', label: 'Scheduler',  icon: '📅' },
+-  { to: '/dashboard', label: 'Dashboard',  icon: '📊' },
+-  { to: '/search',    label: 'Search',     icon: '🔍' },
+-  { to: '/settings',  label: 'Settings',   icon: '⚙️' },
++  {
++    to: '/meetings', label: 'Meetings',
++    icon: (
++      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.7" /><path d="M6 11a6 6 0 0 0 12 0M12 20v2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
++    ),
++  },
++  {
++    to: '/tasks', label: 'Tasks',
++    icon: (
++      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="17" height="17" rx="5" stroke="currentColor" strokeWidth="1.7" /><path d="M8 12.5l2.5 2.5L16.5 9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
++    ),
++  },
++  {
++    to: '/scheduler', label: 'Scheduler',
++    icon: (
++      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="3.5" stroke="currentColor" strokeWidth="1.7" /><path d="M3.5 9.5h17M8 3v3.5M16 3v3.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
++    ),
++  },
++  {
++    to: '/dashboard', label: 'Dashboard',
++    icon: (
++      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="4" y="12" width="4" height="8" rx="1.2" stroke="currentColor" strokeWidth="1.7" /><rect x="10" y="7" width="4" height="13" rx="1.2" stroke="currentColor" strokeWidth="1.7" /><rect x="16" y="3" width="4" height="17" rx="1.2" stroke="currentColor" strokeWidth="1.7" /></svg>
++    ),
++  },
++  {
++    to: '/search', label: 'Search',
++    icon: (
++      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" strokeWidth="1.7" /><path d="M20 20l-4.8-4.8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
++    ),
++  },
+ ]
+ 
++const settingsItem = {
++  to: '/settings', label: 'Settings',
++  icon: (
++    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.7" /><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7" /></svg>
++  ),
++}
++
++function navLinkClass({ isActive }: { isActive: boolean }) {
++  return `flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-[13.5px] transition-colors ${
++    isActive
++      ? 'bg-ap-accent-soft font-bold text-ap-accent'
++      : 'font-semibold text-ap-text-secondary hover:bg-ap-surface-alt'
++  }`
++}
++
+ export function Sidebar() {
++  const user = useAuthStore(s => s.user)
++  const dark = useThemeStore(s => s.dark)
++  const toggleDark = useThemeStore(s => s.toggleDark)
++  const [orgName, setOrgName] = useState('')
++
++  useEffect(() => {
++    if (!user?.orgId) return
++    getOrganization(user.orgId).then(org => org && setOrgName(org.name))
++  }, [user?.orgId])
++
+   return (
+-    <aside className="flex h-full w-60 flex-col border-r border-gray-200 bg-white">
+-      <div className="flex h-16 items-center px-6">
+-        <span className="text-lg font-bold text-brand-700">ActionPilot AI</span>
++    <aside className="flex h-full w-[236px] shrink-0 flex-col border-r border-ap-border bg-[color:var(--ap-sidebar-bg)] backdrop-blur-2xl">
++      <div className="flex items-center gap-2.5 px-5 pb-[18px] pt-[22px]">
++        <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-gradient-to-br from-ap-accent to-ap-accent-dark">
++          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="7" stroke="white" strokeWidth="2" /><circle cx="12" cy="12" r="2" fill="white" /></svg>
++        </div>
++        <span className="text-[15px] font-bold tracking-tight text-ap-text-primary">ActionPilot</span>
+       </div>
+-      <nav className="flex-1 space-y-1 px-3 py-2">
++
++      <nav className="flex flex-1 flex-col gap-0.5 px-3 py-1">
+         {navItems.map(item => (
+-          <NavLink
+-            key={item.to}
+-            to={item.to}
+-            className={({ isActive }) =>
+-              `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+-                isActive
+-                  ? 'bg-brand-50 text-brand-700'
+-                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+-              }`
+-            }
+-          >
+-            <span>{item.icon}</span>
++          <NavLink key={item.to} to={item.to} className={navLinkClass}>
++            {item.icon}
+             {item.label}
+           </NavLink>
+         ))}
++        <div className="mx-2 my-2.5 h-px bg-ap-border" />
++        <NavLink to={settingsItem.to} className={navLinkClass}>
++          {settingsItem.icon}
++          {settingsItem.label}
++        </NavLink>
+       </nav>
++
++      {user && (
++        <div className="flex items-center gap-2.5 border-t border-ap-border px-4 py-3.5">
++          <Avatar src={user.photoURL} name={user.displayName || user.email} size="md" />
++          <div className="min-w-0 flex-1">
++            <p className="truncate text-[13px] font-semibold text-ap-text-primary">{user.displayName || user.email}</p>
++            <p className="truncate text-[11.5px] text-ap-text-tertiary">{orgName || ' '}</p>
++          </div>
++          <button
++            onClick={toggleDark}
++            aria-label="Toggle dark mode"
++            className={`relative h-6 w-10 shrink-0 rounded-full p-0.5 transition-colors ${dark ? 'bg-ap-accent' : 'bg-ap-surface-alt'}`}
++          >
++            <span
++              className="block h-5 w-5 rounded-full bg-white shadow transition-transform"
++              style={{ transform: dark ? 'translateX(16px)' : 'translateX(0)' }}
++            />
++          </button>
++        </div>
++      )}
+     </aside>
+   )
+ }
+diff --git a/src/components/layout/Topbar.tsx b/src/components/layout/Topbar.tsx
+index 408860b..91e78cb 100644
+--- a/src/components/layout/Topbar.tsx
++++ b/src/components/layout/Topbar.tsx
+@@ -1,18 +1,21 @@
+-import { Link } from 'react-router-dom'
+-import { Avatar } from '@/components/ui/Avatar'
+-import { useAuthStore } from '@/store/auth.store'
++import { Link, useLocation } from 'react-router-dom'
+ 
+ interface Props { title: string }
+ 
+ export function Topbar({ title }: Props) {
+-  const user = useAuthStore(s => s.user)
++  const { pathname } = useLocation()
++  const showNewMeeting = pathname === '/meetings'
++
+   return (
+-    <header className="flex h-16 items-center justify-between border-b border-gray-200 bg-white px-6">
+-      <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
+-      {user && (
+-        <Link to="/settings" className="flex items-center gap-3 rounded-lg px-2 py-1 hover:bg-gray-50">
+-          <span className="text-sm text-gray-600">{user.displayName}</span>
+-          <Avatar src={user.photoURL} name={user.displayName} size="sm" />
++    <header className="flex h-16 shrink-0 items-center justify-between border-b border-ap-border bg-ap-surface px-7">
++      <h1 className="text-[19px] font-bold tracking-tight text-ap-text-primary">{title}</h1>
++      {showNewMeeting && (
++        <Link
++          to="/meetings/new"
++          className="flex items-center gap-1.5 rounded-[11px] bg-ap-accent px-4 py-2.5 text-[13.5px] font-semibold text-white hover:opacity-90"
++        >
++          <svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="white" strokeWidth="2.2" strokeLinecap="round" /></svg>
++          New meeting
+         </Link>
+       )}
+     </header>
+diff --git a/src/components/meetings/AskAiBar.tsx b/src/components/meetings/AskAiBar.tsx
+index e2be81f..6e0c3c1 100644
+--- a/src/components/meetings/AskAiBar.tsx
++++ b/src/components/meetings/AskAiBar.tsx
+@@ -1,7 +1,5 @@
+ import { useState } from 'react'
+ import { askAboutMeeting } from '@/services/ai/qa'
+-import { Button } from '@/components/ui/Button'
+-import { Card } from '@/components/ui/Card'
+ 
+ interface Props {
+   transcript: string
+@@ -30,21 +28,28 @@ export function AskAiBar({ transcript, summary }: Props) {
+   }
+ 
+   return (
+-    <Card className="sticky bottom-4 p-3 shadow-md">
+-      {answer && <p className="mb-2 text-sm text-gray-700">{answer}</p>}
+-      {error && <p className="mb-2 text-xs text-red-600">{error}</p>}
+-      <div className="flex gap-2">
++    <div className="rounded-2xl border border-ap-border bg-ap-surface-alt p-1.5">
++      {answer && <p className="px-4 pb-2 pt-2 text-sm leading-relaxed text-ap-text-primary">{answer}</p>}
++      {error && <p className="px-4 pb-2 text-xs text-red-500">{error}</p>}
++      <div className="flex items-center gap-2.5 pl-4">
++        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" className="shrink-0">
++          <path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3z" stroke="var(--ap-accent)" strokeWidth="1.5" strokeLinejoin="round" />
++        </svg>
+         <input
+-          className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+-          placeholder="Ask AI anything about this meeting..."
++          className="flex-1 border-none bg-transparent py-2.5 text-[13.5px] text-ap-text-primary outline-none placeholder:text-ap-text-tertiary"
++          placeholder="Ask AI about this meeting…"
+           value={question}
+           onChange={e => setQuestion(e.target.value)}
+           onKeyDown={e => e.key === 'Enter' && handleAsk()}
+         />
+-        <Button onClick={handleAsk} loading={loading} disabled={!question.trim()}>
+-          Ask
+-        </Button>
++        <button
++          onClick={handleAsk}
++          disabled={loading || !question.trim()}
++          className="shrink-0 rounded-xl bg-ap-accent px-4 py-2.5 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
++        >
++          {loading ? '…' : 'Ask'}
++        </button>
+       </div>
+-    </Card>
++    </div>
+   )
+ }
+diff --git a/src/components/meetings/AudioCapture.tsx b/src/components/meetings/AudioCapture.tsx
+index 80ef143..319cdf1 100644
+--- a/src/components/meetings/AudioCapture.tsx
++++ b/src/components/meetings/AudioCapture.tsx
+@@ -1,5 +1,4 @@
+ import { useRef, useState } from 'react'
+-import { Button } from '@/components/ui/Button'
+ import { transcribeAudio } from '@/services/ai/transcribe'
+ import type { TranscriptLanguage } from '@/utils/language'
+ 
+@@ -9,18 +8,18 @@ interface Props {
+ }
+ 
+ export function AudioCapture({ onText, language }: Props) {
+-  const [recording, setRecording] = useState(false)
+   const [loading, setLoading] = useState(false)
+   const [error, setError] = useState('')
+-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+-  const chunksRef = useRef<Blob[]>([])
+   const fileRef = useRef<HTMLInputElement>(null)
+ 
+-  async function transcribeAndAppend(blob: Blob) {
++  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
++    const file = e.target.files?.[0]
++    e.target.value = ''
++    if (!file) return
+     setLoading(true)
+     setError('')
+     try {
+-      const text = await transcribeAudio(blob, language)
++      const text = await transcribeAudio(file, language)
+       if (text.trim()) onText(text.trim())
+     } catch (err) {
+       setError((err as Error).message || 'Transcription failed')
+@@ -29,56 +28,19 @@ export function AudioCapture({ onText, language }: Props) {
+     }
+   }
+ 
+-  async function startRecording() {
+-    setError('')
+-    try {
+-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+-      const recorder = new MediaRecorder(stream)
+-      chunksRef.current = []
+-      recorder.ondataavailable = e => chunksRef.current.push(e.data)
+-      recorder.onstop = () => {
+-        stream.getTracks().forEach(t => t.stop())
+-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType })
+-        void transcribeAndAppend(blob)
+-      }
+-      recorder.start()
+-      mediaRecorderRef.current = recorder
+-      setRecording(true)
+-    } catch {
+-      setError('Microphone access denied or unavailable')
+-    }
+-  }
+-
+-  function stopRecording() {
+-    mediaRecorderRef.current?.stop()
+-    setRecording(false)
+-  }
+-
+-  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+-    const file = e.target.files?.[0]
+-    e.target.value = ''
+-    if (!file) return
+-    await transcribeAndAppend(file)
+-  }
+-
+   return (
+-    <div className="flex flex-col items-end gap-1">
+-      <div className="flex gap-2">
+-        {!recording ? (
+-          <Button type="button" variant="secondary" size="sm" onClick={startRecording} loading={loading}>
+-            🔴 Record audio
+-          </Button>
+-        ) : (
+-          <Button type="button" variant="danger" size="sm" onClick={stopRecording}>
+-            ■ Stop &amp; transcribe
+-          </Button>
+-        )}
+-        <input ref={fileRef} type="file" accept="audio/*" className="hidden" onChange={handleFile} />
+-        <Button type="button" variant="secondary" size="sm" onClick={() => fileRef.current?.click()} loading={loading}>
+-          Upload audio
+-        </Button>
+-      </div>
+-      {error && <p className="text-xs text-red-600">{error}</p>}
++    <div className="flex flex-col items-center gap-1">
++      <input ref={fileRef} type="file" accept="audio/*" className="hidden" onChange={handleFile} />
++      <button
++        type="button"
++        onClick={() => fileRef.current?.click()}
++        disabled={loading}
++        className="flex items-center justify-center gap-2 rounded-xl border border-ap-border bg-ap-surface px-3 py-[11px] text-[12.5px] font-semibold text-ap-text-primary disabled:opacity-60"
++      >
++        <span className="h-[9px] w-[9px] rounded-full bg-ap-text-tertiary" />
++        {loading ? 'Transcribing…' : 'Upload audio'}
++      </button>
++      {error && <p className="text-xs text-red-500">{error}</p>}
+     </div>
+   )
+ }
+diff --git a/src/components/meetings/MeetingBadge.tsx b/src/components/meetings/MeetingBadge.tsx
+index d478055..382d997 100644
+--- a/src/components/meetings/MeetingBadge.tsx
++++ b/src/components/meetings/MeetingBadge.tsx
+@@ -13,7 +13,7 @@ function initials(title: string): string {
+ 
+ export function MeetingBadge({ title }: Props) {
+   return (
+-    <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${colorForSeed(title)}`}>
++    <span className={`inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl text-[13px] font-bold ${colorForSeed(title)}`}>
+       {initials(title)}
+     </span>
+   )
+diff --git a/src/components/meetings/MicDictation.tsx b/src/components/meetings/MicDictation.tsx
+index e442392..3e631df 100644
+--- a/src/components/meetings/MicDictation.tsx
++++ b/src/components/meetings/MicDictation.tsx
+@@ -1,5 +1,4 @@
+ import { useEffect, useRef, useState } from 'react'
+-import { Button } from '@/components/ui/Button'
+ import { speechLangFor, type TranscriptLanguage } from '@/utils/language'
+ 
+ type SpeechRecognitionCtor = new () => SpeechRecognition
+@@ -56,8 +55,17 @@ export function MicDictation({ onResult, language }: Props) {
+   if (!supported) return null
+ 
+   return (
+-    <Button type="button" variant={listening ? 'danger' : 'secondary'} size="sm" onClick={toggle}>
+-      {listening ? '● Stop dictation' : '🎤 Dictate'}
+-    </Button>
++    <button
++      type="button"
++      onClick={toggle}
++      className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-[11px] text-[12.5px] font-semibold ${
++        listening
++          ? 'border-transparent bg-red-600 text-white'
++          : 'border-ap-border bg-ap-surface text-ap-text-primary'
++      }`}
++    >
++      <span className={`h-[9px] w-[9px] rounded-full ${listening ? 'bg-white' : 'bg-ap-text-tertiary'}`} />
++      {listening ? 'Stop dictation' : 'Live dictation'}
++    </button>
+   )
+ }
+diff --git a/src/components/meetings/TranscriptUploader.tsx b/src/components/meetings/TranscriptUploader.tsx
+index 612cd48..aa40c66 100644
+--- a/src/components/meetings/TranscriptUploader.tsx
++++ b/src/components/meetings/TranscriptUploader.tsx
+@@ -1,5 +1,4 @@
+ import { useRef } from 'react'
+-import { Button } from '@/components/ui/Button'
+ 
+ interface Props {
+   onText: (text: string) => void
+@@ -19,9 +18,14 @@ export function TranscriptUploader({ onText }: Props) {
+   return (
+     <div>
+       <input ref={fileRef} type="file" accept=".txt,.md" className="hidden" onChange={handleFile} />
+-      <Button type="button" variant="secondary" size="sm" onClick={() => fileRef.current?.click()}>
+-        Upload .txt transcript
+-      </Button>
++      <button
++        type="button"
++        onClick={() => fileRef.current?.click()}
++        className="flex items-center justify-center gap-2 rounded-xl border border-ap-border bg-ap-surface px-3 py-[11px] text-[12.5px] font-semibold text-ap-text-primary"
++      >
++        <span className="h-[9px] w-[9px] rounded-full bg-ap-text-tertiary" />
++        Upload .txt file
++      </button>
+     </div>
+   )
+ }
+diff --git a/src/components/scheduler/ScheduleConfirmDialog.tsx b/src/components/scheduler/ScheduleConfirmDialog.tsx
+index 7f7fcb8..f044b61 100644
+--- a/src/components/scheduler/ScheduleConfirmDialog.tsx
++++ b/src/components/scheduler/ScheduleConfirmDialog.tsx
+@@ -28,6 +28,8 @@ function durationMinutes(start: Date, end: Date): number {
+   return Math.round((end.getTime() - start.getTime()) / 60_000)
+ }
+ 
++const inputClass = 'rounded-lg border border-ap-border bg-ap-surface-alt px-2 py-1.5 text-sm text-ap-text-primary outline-none focus:border-ap-accent'
++
+ export function ScheduleConfirmDialog({ proposals, onCancel, onConfirm, confirming, error }: Props) {
+   const [edited, setEdited] = useState<ScheduleProposal[]>(proposals)
+ 
+@@ -65,28 +67,28 @@ export function ScheduleConfirmDialog({ proposals, onCancel, onConfirm, confirmi
+         </>
+       }
+     >
+-      <div className="space-y-4">
+-        {error && <p className="text-sm text-red-600">{error}</p>}
++      <div className="space-y-3">
++        {error && <p className="text-sm text-red-500">{error}</p>}
+         {edited.map((item, i) => (
+-          <div key={item.taskId} className="rounded-lg border border-gray-200 p-3">
+-            <p className="mb-2 text-sm font-medium text-gray-900">{item.title}</p>
++          <div key={item.taskId} className="rounded-xl border border-ap-border bg-ap-surface-alt p-3">
++            <p className="mb-2 text-sm font-semibold text-ap-text-primary">{item.title}</p>
+             <div className="grid grid-cols-3 gap-2">
+               <input
+                 type="date"
+                 value={toDateInputValue(item.start)}
+                 onChange={e => updateStart(i, e.target.value, toTimeInputValue(item.start))}
+-                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500"
++                className={inputClass}
+               />
+               <input
+                 type="time"
+                 value={toTimeInputValue(item.start)}
+                 onChange={e => updateStart(i, toDateInputValue(item.start), e.target.value)}
+-                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500"
++                className={inputClass}
+               />
+               <select
+                 value={durationMinutes(item.start, item.end)}
+                 onChange={e => updateDuration(i, Number(e.target.value))}
+-                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm outline-none focus:border-brand-500"
++                className={inputClass}
+               >
+                 <option value={15}>15 min</option>
+                 <option value={30}>30 min</option>
+diff --git a/src/components/tasks/TaskInlineRow.tsx b/src/components/tasks/TaskInlineRow.tsx
+deleted file mode 100644
+index 2cce8e7..0000000
+--- a/src/components/tasks/TaskInlineRow.tsx
++++ /dev/null
+@@ -1,36 +0,0 @@
+-import { updateTaskStatus } from '@/services/firebase/tasks'
+-import { Badge } from '@/components/ui/Badge'
+-import { PRIORITY_COLORS } from '@/utils/task'
+-import { formatDate } from '@/utils/date'
+-import type { Task } from '@/types'
+-
+-interface Props {
+-  task: Task
+-  onChange?: (task: Task) => void
+-}
+-
+-export function TaskInlineRow({ task, onChange }: Props) {
+-  const completed = task.status === 'completed'
+-
+-  async function toggle() {
+-    const nextStatus = completed ? 'todo' : 'completed'
+-    await updateTaskStatus(task.taskId, nextStatus)
+-    onChange?.({ ...task, status: nextStatus })
+-  }
+-
+-  return (
+-    <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+-      <input
+-        type="checkbox"
+-        checked={completed}
+-        onChange={toggle}
+-        className="h-4 w-4 shrink-0 accent-brand-600"
+-      />
+-      <span className={`flex-1 text-sm ${completed ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+-        {task.title}
+-      </span>
+-      <span className="shrink-0 text-xs text-gray-400">Due {formatDate(task.dueDate)}</span>
+-      <Badge label={task.priorityLabel} className={`shrink-0 ${PRIORITY_COLORS[task.priorityLabel]}`} />
+-    </div>
+-  )
+-}
+diff --git a/src/components/ui/Avatar.tsx b/src/components/ui/Avatar.tsx
+index bad4d02..66b7812 100644
+--- a/src/components/ui/Avatar.tsx
++++ b/src/components/ui/Avatar.tsx
+@@ -4,7 +4,7 @@ interface Props {
+   size?: 'sm' | 'md' | 'lg'
+ }
+ 
+-const sizeClass = { sm: 'h-7 w-7 text-xs', md: 'h-9 w-9 text-sm', lg: 'h-12 w-12 text-base' }
++const sizeClass = { sm: 'h-7 w-7 text-[11px]', md: 'h-9 w-9 text-[13px]', lg: 'h-12 w-12 text-base' }
+ 
+ function initials(name: string) {
+   return name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
+@@ -13,7 +13,7 @@ function initials(name: string) {
+ export function Avatar({ src, name, size = 'md' }: Props) {
+   if (src) return <img src={src} alt={name} className={`rounded-full object-cover ${sizeClass[size]}`} />
+   return (
+-    <span className={`inline-flex items-center justify-center rounded-full bg-brand-100 font-semibold text-brand-700 ${sizeClass[size]}`}>
++    <span className={`inline-flex shrink-0 items-center justify-center rounded-full bg-ap-accent-soft font-bold text-ap-accent ${sizeClass[size]}`}>
+       {initials(name)}
+     </span>
+   )
+diff --git a/src/components/ui/Badge.tsx b/src/components/ui/Badge.tsx
+index 52c15df..597b27c 100644
+--- a/src/components/ui/Badge.tsx
++++ b/src/components/ui/Badge.tsx
+@@ -5,7 +5,7 @@ interface Props {
+ 
+ export function Badge({ label, className = '' }: Props) {
+   return (
+-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${className}`}>
++    <span className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-[3px] text-[11px] font-bold ${className}`}>
+       {label}
+     </span>
+   )
+diff --git a/src/components/ui/Button.tsx b/src/components/ui/Button.tsx
+index e3137ae..88b75ea 100644
+--- a/src/components/ui/Button.tsx
++++ b/src/components/ui/Button.tsx
+@@ -10,16 +10,16 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
+ }
+ 
+ const variantClass: Record<Variant, string> = {
+-  primary:   'bg-brand-600 text-white hover:bg-brand-700 focus-visible:ring-brand-500',
+-  secondary: 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 focus-visible:ring-gray-400',
+-  ghost:     'text-gray-600 hover:bg-gray-100 focus-visible:ring-gray-400',
++  primary:   'bg-ap-accent text-white hover:opacity-90 focus-visible:ring-ap-accent',
++  secondary: 'bg-ap-surface-alt text-ap-text-primary border border-ap-border hover:bg-ap-border/40 focus-visible:ring-ap-border',
++  ghost:     'text-ap-text-secondary hover:bg-ap-surface-alt focus-visible:ring-ap-border',
+   danger:    'bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500',
+ }
+ 
+ const sizeClass: Record<Size, string> = {
+-  sm: 'px-3 py-1.5 text-sm',
+-  md: 'px-4 py-2 text-sm',
+-  lg: 'px-5 py-2.5 text-base',
++  sm: 'px-3 py-1.5 text-[12.5px] rounded-lg',
++  md: 'px-4 py-2.5 text-[13.5px] rounded-xl',
++  lg: 'px-5 py-3 text-[15px] rounded-xl',
+ }
+ 
+ export function Button({ variant = 'primary', size = 'md', loading, children, className = '', disabled, ...rest }: Props) {
+@@ -27,7 +27,7 @@ export function Button({ variant = 'primary', size = 'md', loading, children, cl
+     <button
+       {...rest}
+       disabled={disabled || loading}
+-      className={`inline-flex items-center gap-2 rounded-lg font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${variantClass[variant]} ${sizeClass[size]} ${className}`}
++      className={`inline-flex items-center justify-center gap-2 font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${variantClass[variant]} ${sizeClass[size]} ${className}`}
+     >
+       {loading && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
+       {children}
+diff --git a/src/components/ui/Card.tsx b/src/components/ui/Card.tsx
+index 9b09d7b..38708d1 100644
+--- a/src/components/ui/Card.tsx
++++ b/src/components/ui/Card.tsx
+@@ -4,7 +4,7 @@ interface Props extends HTMLAttributes<HTMLDivElement> {}
+ 
+ export function Card({ className = '', children, ...rest }: Props) {
+   return (
+-    <div {...rest} className={`rounded-xl border border-gray-200 bg-white shadow-sm ${className}`}>
++    <div {...rest} className={`rounded-2xl border border-ap-border bg-ap-surface p-[18px] ${className}`}>
+       {children}
+     </div>
+   )
+diff --git a/src/components/ui/Input.tsx b/src/components/ui/Input.tsx
+index 82ee8f4..246372f 100644
+--- a/src/components/ui/Input.tsx
++++ b/src/components/ui/Input.tsx
+@@ -7,13 +7,13 @@ interface Props extends InputHTMLAttributes<HTMLInputElement> {
+ 
+ export function Input({ label, error, className = '', ...rest }: Props) {
+   return (
+-    <div className="flex flex-col gap-1">
+-      {label && <label className="text-sm font-medium text-gray-700">{label}</label>}
++    <div className="flex flex-col gap-1.5">
++      {label && <label className="text-[13px] font-semibold text-ap-text-secondary">{label}</label>}
+       <input
+         {...rest}
+-        className={`rounded-lg border px-3 py-2 text-sm outline-none transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-100 ${error ? 'border-red-400' : 'border-gray-300'} ${className}`}
++        className={`rounded-xl border bg-ap-surface-alt px-3.5 py-3 text-sm text-ap-text-primary outline-none transition-colors placeholder:text-ap-text-tertiary focus:border-ap-accent focus:ring-2 focus:ring-ap-accent-soft ${error ? 'border-red-400' : 'border-ap-border'} ${className}`}
+       />
+-      {error && <p className="text-xs text-red-600">{error}</p>}
++      {error && <p className="text-xs text-red-500">{error}</p>}
+     </div>
+   )
+ }
+diff --git a/src/components/ui/Modal.tsx b/src/components/ui/Modal.tsx
+index 6bb5ef4..774ca4a 100644
+--- a/src/components/ui/Modal.tsx
++++ b/src/components/ui/Modal.tsx
+@@ -10,15 +10,15 @@ interface Props {
+ export function Modal({ title, onClose, children, footer }: Props) {
+   return (
+     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+-      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl bg-white shadow-xl">
+-        <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+-          <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" aria-label="Close">
++      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl border border-ap-border bg-ap-surface shadow-2xl">
++        <div className="flex items-center justify-between border-b border-ap-border px-5 py-4">
++          <h3 className="text-[13.5px] font-bold text-ap-text-primary">{title}</h3>
++          <button onClick={onClose} className="text-ap-text-tertiary hover:text-ap-text-primary" aria-label="Close">
+             ✕
+           </button>
+         </div>
+         <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+-        {footer && <div className="flex justify-end gap-2 border-t border-gray-200 px-5 py-4">{footer}</div>}
++        {footer && <div className="flex justify-end gap-2 border-t border-ap-border px-5 py-4">{footer}</div>}
+       </div>
+     </div>
+   )
+diff --git a/src/components/ui/Spinner.tsx b/src/components/ui/Spinner.tsx
+index a7f88d8..0220cb6 100644
+--- a/src/components/ui/Spinner.tsx
++++ b/src/components/ui/Spinner.tsx
+@@ -4,6 +4,6 @@ const sizeClass = { sm: 'h-4 w-4', md: 'h-6 w-6', lg: 'h-10 w-10' }
+ 
+ export function Spinner({ size = 'md' }: Props) {
+   return (
+-    <span className={`inline-block animate-spin rounded-full border-2 border-brand-600 border-t-transparent ${sizeClass[size]}`} />
++    <span className={`inline-block animate-spin rounded-full border-2 border-ap-accent border-t-transparent ${sizeClass[size]}`} />
+   )
+ }
+diff --git a/src/hooks/useAudioRecorder.ts b/src/hooks/useAudioRecorder.ts
+new file mode 100644
+index 0000000..3e7fd88
+--- /dev/null
++++ b/src/hooks/useAudioRecorder.ts
+@@ -0,0 +1,56 @@
++import { useRef, useState } from 'react'
++import { transcribeAudio } from '@/services/ai/transcribe'
++import type { TranscriptLanguage } from '@/utils/language'
++
++interface Options {
++  language: TranscriptLanguage
++  onText: (text: string) => void
++}
++
++export function useAudioRecorder({ language, onText }: Options) {
++  const [recording, setRecording] = useState(false)
++  const [loading, setLoading] = useState(false)
++  const [error, setError] = useState('')
++  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
++  const chunksRef = useRef<Blob[]>([])
++
++  async function transcribeAndAppend(blob: Blob) {
++    setLoading(true)
++    setError('')
++    try {
++      const text = await transcribeAudio(blob, language)
++      if (text.trim()) onText(text.trim())
++    } catch (err) {
++      setError((err as Error).message || 'Transcription failed')
++    } finally {
++      setLoading(false)
++    }
++  }
++
++  async function start() {
++    setError('')
++    try {
++      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
++      const recorder = new MediaRecorder(stream)
++      chunksRef.current = []
++      recorder.ondataavailable = e => chunksRef.current.push(e.data)
++      recorder.onstop = () => {
++        stream.getTracks().forEach(t => t.stop())
++        const blob = new Blob(chunksRef.current, { type: recorder.mimeType })
++        void transcribeAndAppend(blob)
++      }
++      recorder.start()
++      mediaRecorderRef.current = recorder
++      setRecording(true)
++    } catch {
++      setError('Microphone access denied or unavailable')
++    }
++  }
++
++  function stop() {
++    mediaRecorderRef.current?.stop()
++    setRecording(false)
++  }
++
++  return { recording, loading, error, start, stop }
++}
+diff --git a/src/index.css b/src/index.css
+index c78108d..73ea091 100644
+--- a/src/index.css
++++ b/src/index.css
+@@ -2,7 +2,50 @@
+ @tailwind components;
+ @tailwind utilities;
+ 
++:root {
++  --ap-bg: #f5f5f7;
++  --ap-surface: #ffffff;
++  --ap-surface-alt: #f2f2f5;
++  --ap-border: #e5e5ea;
++  --ap-text-primary: #1c1c1e;
++  --ap-text-secondary: #6e6e73;
++  --ap-text-tertiary: #9a9aa0;
++  --ap-scrollbar: rgba(0, 0, 0, 0.15);
++  --ap-sidebar-bg: rgba(255, 255, 255, 0.72);
++  --ap-accent: #4f46e5;
++  --ap-accent-dark: #7c76f0;
++  --ap-accent-soft: rgba(79, 70, 229, 0.12);
++}
++
++.dark {
++  --ap-bg: #000000;
++  --ap-surface: #1c1c1e;
++  --ap-surface-alt: #2c2c2e;
++  --ap-border: #38383a;
++  --ap-text-primary: #f5f5f7;
++  --ap-text-secondary: #a1a1a6;
++  --ap-text-tertiary: #6e6e73;
++  --ap-scrollbar: rgba(255, 255, 255, 0.18);
++  --ap-sidebar-bg: rgba(28, 28, 30, 0.72);
++}
++
++@keyframes ap-fade-up {
++  from { opacity: 0; transform: translateY(6px); }
++  to { opacity: 1; transform: translateY(0); }
++}
++
++@keyframes ap-pulse {
++  0%, 100% { opacity: 1; }
++  50% { opacity: 0.35; }
++}
++
+ @layer base {
+   *, *::before, *::after { box-sizing: border-box; }
+-  body { @apply bg-gray-50 text-gray-900 antialiased; }
++  body {
++    @apply bg-ap-bg text-ap-text-primary antialiased font-sans;
++  }
++  ::selection { background: rgba(79, 70, 229, 0.25); }
++  input:focus, select:focus, textarea:focus, button:focus { outline: none; }
++  ::-webkit-scrollbar { width: 8px; height: 8px; }
++  ::-webkit-scrollbar-thumb { background: var(--ap-scrollbar); border-radius: 8px; }
+ }
+diff --git a/src/main.tsx b/src/main.tsx
+index 964aeb4..c9e480a 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -2,6 +2,9 @@ import React from 'react'
+ import ReactDOM from 'react-dom/client'
+ import App from './App'
+ import './index.css'
++import { useThemeStore } from '@/store/theme.store'
++
++useThemeStore.getState().hydrate()
+ 
+ ReactDOM.createRoot(document.getElementById('root')!).render(
+   <React.StrictMode>
+diff --git a/src/pages/DashboardPage.tsx b/src/pages/DashboardPage.tsx
+index 7f787e3..ae14328 100644
+--- a/src/pages/DashboardPage.tsx
++++ b/src/pages/DashboardPage.tsx
+@@ -26,38 +26,40 @@ export function DashboardPage() {
+   }, [orgId])
+ 
+   if (loading) return <div className="flex justify-center pt-20"><Spinner size="lg" /></div>
+-  if (error) return <p className="text-sm text-red-600">{error}</p>
+-  if (!analytics) return <p className="text-gray-500">No data yet.</p>
++  if (error) return <p className="text-sm text-red-500">{error}</p>
++  if (!analytics) return <p className="text-ap-text-secondary">No data yet.</p>
+ 
+   const rate = Math.round(analytics.completionRate * 100)
+   const memberName = (uid: string) => members.find(m => m.uid === uid)?.displayName ?? uid
+   const activeMembers = Object.entries(analytics.memberStats).filter(([, stat]) => stat.assigned > 0)
+ 
+   return (
+-    <div className="space-y-6">
+-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
++    <div className="mx-auto flex max-w-[920px] flex-col gap-5">
++      <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-4">
+         <StatCard label="Tasks created" value={analytics.tasksCreated} />
+-        <StatCard label="Completed" value={analytics.tasksCompleted} color="text-green-600" />
+-        <StatCard label="Overdue" value={analytics.tasksOverdue} color="text-red-600" />
+-        <StatCard label="Completion rate" value={`${rate}%`} color={rate >= 70 ? 'text-green-600' : 'text-orange-500'} />
++        <StatCard label="Completed" value={analytics.tasksCompleted} color="#1a9c4a" />
++        <StatCard label="Overdue" value={analytics.tasksOverdue} color="#d6301f" />
++        <StatCard label="Completion rate" value={`${rate}%`} color="var(--ap-accent)" />
+       </div>
+ 
+-      <Card className="p-5">
+-        <h3 className="mb-4 text-sm font-semibold text-gray-700">Team performance</h3>
++      <Card>
++        <h3 className="mb-4 text-[13.5px] font-bold text-ap-text-primary">Team performance</h3>
+         {activeMembers.length === 0 && (
+-          <p className="text-sm text-gray-400">No tasks assigned to team members yet.</p>
++          <p className="text-sm text-ap-text-tertiary">No tasks assigned to team members yet.</p>
+         )}
+-        <div className="space-y-3">
++        <div className="flex flex-col gap-3.5">
+           {activeMembers.map(([uid, stat]) => (
+             <div key={uid} className="flex items-center gap-3">
+-              <span className="w-32 truncate text-xs text-gray-500">{memberName(uid)}</span>
+-              <div className="h-2 flex-1 rounded-full bg-gray-100">
++              <span className="w-[110px] shrink-0 truncate text-[13px] text-ap-text-secondary">{memberName(uid)}</span>
++              <div className="h-2 flex-1 rounded-full bg-ap-surface-alt">
+                 <div
+-                  className="h-2 rounded-full bg-brand-500 transition-all"
++                  className="h-2 rounded-full bg-ap-accent transition-all"
+                   style={{ width: `${Math.round(stat.completionRate * 100)}%` }}
+                 />
+               </div>
+-              <span className="w-10 text-right text-xs text-gray-600">{Math.round(stat.completionRate * 100)}%</span>
++              <span className="w-[38px] shrink-0 text-right text-[12.5px] font-semibold text-ap-text-secondary">
++                {Math.round(stat.completionRate * 100)}%
++              </span>
+             </div>
+           ))}
+         </div>
+@@ -66,11 +68,11 @@ export function DashboardPage() {
+   )
+ }
+ 
+-function StatCard({ label, value, color = 'text-gray-900' }: { label: string; value: string | number; color?: string }) {
++function StatCard({ label, value, color = 'var(--ap-text-primary)' }: { label: string; value: string | number; color?: string }) {
+   return (
+-    <Card className="p-4">
+-      <p className="text-xs text-gray-400">{label}</p>
+-      <p className={`mt-1 text-2xl font-bold ${color}`}>{value}</p>
++    <Card>
++      <p className="text-xs font-semibold text-ap-text-tertiary">{label}</p>
++      <p className="mt-2 text-[28px] font-bold tracking-tight" style={{ color }}>{value}</p>
+     </Card>
+   )
+ }
+diff --git a/src/pages/MeetingDetailPage.tsx b/src/pages/MeetingDetailPage.tsx
+index 3e3618d..30e448f 100644
+--- a/src/pages/MeetingDetailPage.tsx
++++ b/src/pages/MeetingDetailPage.tsx
+@@ -1,113 +1,125 @@
+ import { useEffect, useState } from 'react'
+-import { useParams } from 'react-router-dom'
++import { Link, useParams } from 'react-router-dom'
+ import { getMeeting } from '@/services/firebase/meetings'
+ import { listMeetingTasks } from '@/services/firebase/tasks'
+ import { Card } from '@/components/ui/Card'
+ import { Spinner } from '@/components/ui/Spinner'
+ import { Badge } from '@/components/ui/Badge'
+-import { formatDateTime } from '@/utils/date'
+-import { MeetingBadge } from '@/components/meetings/MeetingBadge'
+-import { MeetingSummaryView } from '@/components/meetings/MeetingSummaryView'
++import { formatDateTime, formatDate } from '@/utils/date'
++import { MEETING_STATUS_COLORS, MEETING_STATUS_LABELS } from '@/utils/status'
++import { PRIORITY_COLORS, PRIORITY_LABELS } from '@/utils/task'
+ import { AskAiBar } from '@/components/meetings/AskAiBar'
+-import { TaskInlineRow } from '@/components/tasks/TaskInlineRow'
+ import type { Meeting, Task } from '@/types'
+ 
+-type Tab = 'summary' | 'transcript' | 'tasks'
+-
+-const STATUS_COLOR: Record<string, string> = {
+-  ready: 'bg-green-100 text-green-700',
+-  transcribing: 'bg-blue-100 text-blue-700',
+-  extracting: 'bg-purple-100 text-purple-700',
+-  uploading: 'bg-gray-100 text-gray-600',
+-  error: 'bg-red-100 text-red-700',
+-}
+-
+ export function MeetingDetailPage() {
+   const { meetingId } = useParams<{ meetingId: string }>()
+   const [meeting, setMeeting] = useState<Meeting | null>(null)
+   const [tasks, setTasks] = useState<Task[]>([])
+   const [loading, setLoading] = useState(true)
+-  const [tab, setTab] = useState<Tab>('summary')
+ 
+   useEffect(() => {
+     if (!meetingId) return
++    setLoading(true)
+     Promise.all([getMeeting(meetingId), listMeetingTasks(meetingId)])
+       .then(([m, t]) => { setMeeting(m); setTasks(t) })
+       .finally(() => setLoading(false))
+   }, [meetingId])
+ 
+   if (loading) return <div className="flex justify-center pt-20"><Spinner size="lg" /></div>
+-  if (!meeting) return <p className="text-gray-500">Meeting not found.</p>
++  if (!meeting) return <p className="text-ap-text-secondary">Meeting not found.</p>
+ 
+-  function updateTaskInList(updated: Task) {
+-    setTasks(prev => prev.map(t => (t.taskId === updated.taskId ? updated : t)))
+-  }
++  const transcriptLines = meeting.transcript.split('\n').map(l => l.trim()).filter(Boolean)
+ 
+   return (
+-    <div className="max-w-3xl space-y-4">
+-      <div className="flex items-start gap-3">
+-        <MeetingBadge title={meeting.title} />
+-        <div className="flex-1">
+-          <div className="flex items-center gap-2">
+-            <h2 className="text-xl font-semibold text-gray-900">{meeting.title}</h2>
+-            <Badge label={meeting.status} className={STATUS_COLOR[meeting.status] ?? ''} />
+-          </div>
+-          <p className="text-sm text-gray-400">{formatDateTime(meeting.date)} · {meeting.duration} min · {meeting.platform}</p>
++    <div className="mx-auto max-w-[980px]">
++      <Link to="/meetings" className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-ap-text-secondary hover:text-ap-text-primary">
++        <svg width="15" height="15" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" /></svg>
++        All meetings
++      </Link>
++
++      <div className="mb-[22px] flex items-start justify-between gap-5">
++        <div>
++          <h2 className="mb-1.5 text-[23px] font-bold tracking-tight text-ap-text-primary">{meeting.title}</h2>
++          <p className="text-[13.5px] text-ap-text-tertiary">
++            {formatDateTime(meeting.date)} · {meeting.duration} min · {tasks.length} tasks extracted
++          </p>
+         </div>
++        <Badge label={MEETING_STATUS_LABELS[meeting.status]} className={MEETING_STATUS_COLORS[meeting.status]} />
+       </div>
+ 
+-      <div className="flex gap-1 border-b border-gray-200">
+-        {([
+-          ['summary', 'Summary'],
+-          ['transcript', 'Transcript'],
+-          ['tasks', `Tasks (${tasks.length})`],
+-        ] as [Tab, string][]).map(([key, label]) => (
+-          <button
+-            key={key}
+-            onClick={() => setTab(key)}
+-            className={`px-4 py-2 text-sm font-medium transition-colors ${
+-              tab === key
+-                ? 'border-b-2 border-brand-600 text-brand-700'
+-                : 'text-gray-500 hover:text-gray-700'
+-            }`}
+-          >
+-            {label}
+-          </button>
+-        ))}
+-      </div>
++      <div className="grid grid-cols-1 gap-[22px] lg:grid-cols-[1.15fr_0.85fr]">
++        <div className="flex flex-col gap-4">
++          <Card>
++            <h3 className="mb-2.5 text-[13px] font-bold text-ap-text-secondary">AI Summary</h3>
++            <p className="text-sm leading-relaxed text-ap-text-primary">
++              {meeting.summary || 'Summary will appear once processing completes.'}
++            </p>
++            {meeting.keyHighlights.length > 0 && (
++              <div className="mt-4">
++                <h4 className="mb-2 text-[13px] font-bold text-ap-text-secondary">Key highlights</h4>
++                <ul className="space-y-1.5">
++                  {meeting.keyHighlights.map((point, i) => (
++                    <li key={i} className="flex gap-2 text-sm text-ap-text-primary">
++                      <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ap-text-tertiary" />
++                      {point}
++                    </li>
++                  ))}
++                </ul>
++              </div>
++            )}
++            {meeting.decisions.length > 0 && (
++              <div className="mt-4">
++                <h4 className="mb-2 text-[13px] font-bold text-ap-text-secondary">Decisions</h4>
++                <ol className="space-y-1.5">
++                  {meeting.decisions.map((point, i) => (
++                    <li key={i} className="flex gap-2 text-sm text-ap-text-primary">
++                      <span className="font-semibold text-ap-accent">{i + 1}.</span>
++                      {point}
++                    </li>
++                  ))}
++                </ol>
++              </div>
++            )}
++          </Card>
+ 
+-      {tab === 'summary' && (
+-        <Card className="p-5">
+-          <MeetingSummaryView
+-            summary={meeting.summary}
+-            keyHighlights={meeting.keyHighlights ?? []}
+-            decisions={meeting.decisions ?? []}
+-          />
+-        </Card>
+-      )}
++          <Card>
++            <h3 className="mb-2.5 text-[13px] font-bold text-ap-text-secondary">Transcript</h3>
++            {transcriptLines.length === 0 ? (
++              <p className="text-sm text-ap-text-tertiary">No transcript available.</p>
++            ) : (
++              <div className="max-h-[28rem] overflow-y-auto">
++                {transcriptLines.map((line, i) => (
++                  <div key={i} className="border-b border-ap-border py-2 text-[13.5px] leading-relaxed text-ap-text-primary last:border-0">
++                    {line}
++                  </div>
++                ))}
++              </div>
++            )}
++          </Card>
++        </div>
+ 
+-      {tab === 'transcript' && (
+-        <Card className="p-5">
+-          {meeting.transcript ? (
+-            <pre className="max-h-[28rem] overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-600">
+-              {meeting.transcript}
+-            </pre>
+-          ) : (
+-            <p className="text-sm text-gray-400">No transcript available.</p>
+-          )}
++        <Card>
++          <h3 className="mb-3 text-[13px] font-bold text-ap-text-secondary">Extracted tasks · {tasks.length}</h3>
++          {tasks.length === 0 && <p className="text-sm text-ap-text-tertiary">No tasks extracted yet.</p>}
++          <div className="flex flex-col gap-2.5">
++            {tasks.map(t => (
++              <div key={t.taskId} className="rounded-[14px] border border-ap-border bg-ap-surface-alt p-3">
++                <p className="mb-2 text-[13.5px] font-semibold leading-snug text-ap-text-primary">{t.title}</p>
++                <div className="flex items-center justify-between">
++                  <span className="text-xs text-ap-text-tertiary">Due {formatDate(t.dueDate)}</span>
++                  <Badge label={PRIORITY_LABELS[t.priorityLabel]} className={PRIORITY_COLORS[t.priorityLabel]} />
++                </div>
++              </div>
++            ))}
++          </div>
+         </Card>
+-      )}
++      </div>
+ 
+-      {tab === 'tasks' && (
+-        <div className="space-y-2">
+-          {tasks.length === 0 && <p className="text-sm text-gray-400">No tasks extracted yet.</p>}
+-          {tasks.map(task => (
+-            <TaskInlineRow key={task.taskId} task={task} onChange={updateTaskInList} />
+-          ))}
++      {meeting.transcript && (
++        <div className="mt-[22px]">
++          <AskAiBar transcript={meeting.transcript} summary={meeting.summary} />
+         </div>
+       )}
+-
+-      {meeting.transcript && <AskAiBar transcript={meeting.transcript} summary={meeting.summary} />}
+     </div>
+   )
+ }
+diff --git a/src/pages/MeetingsPage.tsx b/src/pages/MeetingsPage.tsx
+index 1a750c2..84d9598 100644
+--- a/src/pages/MeetingsPage.tsx
++++ b/src/pages/MeetingsPage.tsx
+@@ -6,16 +6,9 @@ import { Badge } from '@/components/ui/Badge'
+ import { Spinner } from '@/components/ui/Spinner'
+ import { MeetingBadge } from '@/components/meetings/MeetingBadge'
+ import { formatTime, dateGroupLabel, type DateGroup } from '@/utils/date'
++import { MEETING_STATUS_COLORS, MEETING_STATUS_LABELS } from '@/utils/status'
+ import type { Meeting } from '@/types'
+ 
+-const STATUS_COLOR: Record<string, string> = {
+-  ready: 'bg-green-100 text-green-700',
+-  transcribing: 'bg-blue-100 text-blue-700',
+-  extracting: 'bg-purple-100 text-purple-700',
+-  uploading: 'bg-gray-100 text-gray-600',
+-  error: 'bg-red-100 text-red-700',
+-}
+-
+ const GROUP_ORDER: DateGroup[] = ['Today', 'Yesterday', 'Earlier']
+ 
+ function groupMeetings(meetings: Meeting[]): Record<DateGroup, Meeting[]> {
+@@ -34,31 +27,28 @@ export function MeetingsPage() {
+   const groups = groupMeetings(meetings)
+ 
+   return (
+-    <div className="space-y-6">
+-      <div className="flex items-center justify-between">
+-        <h2 className="text-sm text-gray-500">{meetings.length} meetings</h2>
+-        <Link to="/meetings/new" className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700">
+-          + New meeting
+-        </Link>
+-      </div>
+-
++    <div className="mx-auto flex max-w-[820px] flex-col gap-[26px]">
+       {meetings.length === 0 && (
+-        <Card className="py-16 text-center text-gray-400">No meetings yet. Upload or connect a meeting to get started.</Card>
++        <Card className="py-16 text-center text-ap-text-tertiary">
++          No meetings yet. Tap "New meeting" to get started.
++        </Card>
+       )}
+ 
+       {GROUP_ORDER.filter(g => groups[g].length > 0).map(group => (
+-        <div key={group} className="space-y-2">
+-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400">{group}</h3>
+-          <div className="grid gap-2">
++        <div key={group}>
++          <h3 className="mb-2.5 text-xs font-bold uppercase tracking-wider text-ap-text-tertiary">{group}</h3>
++          <div className="flex flex-col gap-2">
+             {groups[group].map(m => (
+               <Link key={m.meetingId} to={`/meetings/${m.meetingId}`}>
+-                <Card className="flex items-center gap-3 p-3 transition-shadow hover:shadow-md">
++                <Card className="flex items-center gap-3.5 !p-4 transition-shadow hover:shadow-md dark:hover:shadow-black/30">
+                   <MeetingBadge title={m.title} />
+-                  <div className="flex-1">
+-                    <p className="font-medium text-gray-900">{m.title || 'Untitled meeting'}</p>
+-                    <p className="mt-0.5 text-xs text-gray-400">{formatTime(m.date)} · {m.duration} min · {m.taskCount} tasks</p>
++                  <div className="min-w-0 flex-1">
++                    <p className="truncate text-[14.5px] font-semibold text-ap-text-primary">{m.title || 'Untitled meeting'}</p>
++                    <p className="mt-0.5 text-[12.5px] text-ap-text-tertiary">
++                      {formatTime(m.date)} · {m.duration} min · {m.taskCount} tasks
++                    </p>
+                   </div>
+-                  <Badge label={m.status} className={STATUS_COLOR[m.status] ?? ''} />
++                  <Badge label={MEETING_STATUS_LABELS[m.status]} className={MEETING_STATUS_COLORS[m.status]} />
+                 </Card>
+               </Link>
+             ))}
+diff --git a/src/pages/NewMeetingPage.tsx b/src/pages/NewMeetingPage.tsx
+index 64d6c52..768a3f8 100644
+--- a/src/pages/NewMeetingPage.tsx
++++ b/src/pages/NewMeetingPage.tsx
+@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
+ import { createMeeting, updateMeetingStatus } from '@/services/firebase/meetings'
+ import { extractTasksFromTranscript } from '@/services/ai/extractTasks'
+ import { useAuthStore } from '@/store/auth.store'
+-import { Card } from '@/components/ui/Card'
++import { useAudioRecorder } from '@/hooks/useAudioRecorder'
+ import { Input } from '@/components/ui/Input'
+ import { Button } from '@/components/ui/Button'
+ import { TranscriptUploader } from '@/components/meetings/TranscriptUploader'
+@@ -11,6 +11,8 @@ import { MicDictation } from '@/components/meetings/MicDictation'
+ import { AudioCapture } from '@/components/meetings/AudioCapture'
+ import { LANGUAGE_OPTIONS, type TranscriptLanguage } from '@/utils/language'
+ 
++const WAVEFORM_BARS = 24
++
+ export function NewMeetingPage() {
+   const navigate = useNavigate()
+   const user = useAuthStore(s => s.user)
+@@ -25,6 +27,8 @@ export function NewMeetingPage() {
+     setTranscript(prev => (prev.trim() ? `${prev.trim()}\n${chunk}` : chunk))
+   }
+ 
++  const recorder = useAudioRecorder({ language, onText: appendTranscript })
++
+   async function handleSubmit() {
+     if (!user || !title.trim() || !transcript.trim()) return
+     setLoading(true)
+@@ -52,9 +56,15 @@ export function NewMeetingPage() {
+     }
+   }
+ 
++  const recordingLabel = recorder.recording
++    ? 'Recording… tap to stop'
++    : recorder.loading
++      ? 'Transcribing…'
++      : 'Tap to start recording'
++
+   return (
+-    <div className="max-w-2xl space-y-4">
+-      <Card className="p-6 space-y-4">
++    <div className="mx-auto max-w-[640px]">
++      <div className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr]">
+         <Input label="Meeting title" value={title} onChange={e => setTitle(e.target.value)} placeholder="Weekly product sync" />
+         <Input
+           label="Duration (minutes)"
+@@ -62,44 +72,85 @@ export function NewMeetingPage() {
+           value={duration}
+           onChange={e => setDuration(Number(e.target.value))}
+         />
++      </div>
+ 
+-        <div className="flex flex-col gap-2">
+-          <div className="flex items-start justify-between gap-3">
+-            <label className="pt-1.5 text-sm font-medium text-gray-700">Transcript</label>
+-            <div className="flex flex-wrap items-center justify-end gap-2">
+-              <select
+-                className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-gray-700 outline-none focus:border-brand-500"
+-                value={language}
+-                onChange={e => setLanguage(e.target.value as TranscriptLanguage)}
+-              >
+-                {LANGUAGE_OPTIONS.map(opt => (
+-                  <option key={opt.code} value={opt.code}>{opt.label}</option>
+-                ))}
+-              </select>
+-              <TranscriptUploader onText={setTranscript} />
+-              <MicDictation onResult={appendTranscript} language={language} />
+-              <AudioCapture onText={appendTranscript} language={language} />
+-            </div>
+-          </div>
+-          <textarea
+-            className="min-h-[220px] rounded-lg border border-gray-300 p-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+-            placeholder="Paste the meeting transcript here..."
+-            value={transcript}
+-            onChange={e => setTranscript(e.target.value)}
++      <div className="text-center">
++        <div
++          onClick={() => (recorder.recording ? recorder.stop() : recorder.start())}
++          className="mx-auto flex h-[104px] w-[104px] cursor-pointer items-center justify-center rounded-full border-2 border-ap-accent bg-ap-accent-soft transition-shadow"
++          style={recorder.recording ? { boxShadow: '0 0 0 10px var(--ap-accent-soft)' } : undefined}
++        >
++          <div
++            className="bg-ap-accent transition-all"
++            style={{
++              width: recorder.recording ? 28 : 40,
++              height: recorder.recording ? 28 : 40,
++              borderRadius: recorder.recording ? 8 : '50%',
++            }}
+           />
+         </div>
++        <p className="mb-1.5 mt-[22px] text-[15px] font-semibold text-ap-text-primary">{recordingLabel}</p>
++        <p className="mb-[34px] text-[13px] text-ap-text-tertiary">
++          Audio is transcribed automatically once you stop recording.
++        </p>
++        {recorder.error && <p className="mb-4 text-xs text-red-500">{recorder.error}</p>}
+ 
+-        {error && <p className="text-sm text-red-600">{error}</p>}
++        <div className="mb-[34px] flex h-10 items-center justify-center gap-1">
++          {Array.from({ length: WAVEFORM_BARS }).map((_, i) => (
++            <span
++              key={i}
++              className="w-[3px] rounded-sm bg-ap-accent transition-all"
++              style={{
++                height: recorder.recording ? 8 + Math.abs(Math.sin(i * 0.9)) * 32 : 6,
++                animation: recorder.recording ? `ap-pulse ${1 + (i % 4) * 0.15}s ease-in-out infinite` : undefined,
++              }}
++            />
++          ))}
++        </div>
+ 
+-        <Button
+-          className="w-full justify-center"
+-          onClick={handleSubmit}
+-          loading={loading}
+-          disabled={!title.trim() || !transcript.trim()}
+-        >
+-          Extract tasks with Gemini
+-        </Button>
+-      </Card>
++        <div className="mb-3.5 flex items-center gap-3">
++          <div className="h-px flex-1 bg-ap-border" />
++          <span className="text-[11.5px] font-semibold text-ap-text-tertiary">OR CONNECT A SOURCE</span>
++          <div className="h-px flex-1 bg-ap-border" />
++        </div>
++        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
++          <TranscriptUploader onText={setTranscript} />
++          <MicDictation onResult={appendTranscript} language={language} />
++          <AudioCapture onText={appendTranscript} language={language} />
++        </div>
++      </div>
++
++      <div className="mt-8 flex flex-col gap-2">
++        <div className="flex items-center justify-between">
++          <label className="text-[13px] font-semibold text-ap-text-secondary">Transcript</label>
++          <select
++            className="rounded-lg border border-ap-border bg-ap-surface-alt px-2 py-1.5 text-[12.5px] text-ap-text-primary outline-none focus:border-ap-accent"
++            value={language}
++            onChange={e => setLanguage(e.target.value as TranscriptLanguage)}
++          >
++            {LANGUAGE_OPTIONS.map(opt => (
++              <option key={opt.code} value={opt.code}>{opt.label}</option>
++            ))}
++          </select>
++        </div>
++        <textarea
++          className="min-h-[180px] rounded-xl border border-ap-border bg-ap-surface-alt p-3.5 text-sm text-ap-text-primary outline-none placeholder:text-ap-text-tertiary focus:border-ap-accent focus:ring-2 focus:ring-ap-accent-soft"
++          placeholder="Paste the meeting transcript here, or use a capture method above…"
++          value={transcript}
++          onChange={e => setTranscript(e.target.value)}
++        />
++      </div>
++
++      {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
++
++      <Button
++        className="mt-4 w-full justify-center"
++        onClick={handleSubmit}
++        loading={loading}
++        disabled={!title.trim() || !transcript.trim()}
++      >
++        Extract tasks with Gemini
++      </Button>
+     </div>
+   )
+ }
+diff --git a/src/pages/SchedulerPage.tsx b/src/pages/SchedulerPage.tsx
+index dcb780d..8992168 100644
+--- a/src/pages/SchedulerPage.tsx
++++ b/src/pages/SchedulerPage.tsx
+@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/Button'
+ import { Spinner } from '@/components/ui/Spinner'
+ import { Badge } from '@/components/ui/Badge'
+ import { ScheduleConfirmDialog } from '@/components/scheduler/ScheduleConfirmDialog'
+-import { PRIORITY_COLORS } from '@/utils/task'
++import { PRIORITY_COLORS, PRIORITY_LABELS } from '@/utils/task'
+ import { formatDate } from '@/utils/date'
+ import type { Task } from '@/types'
+ 
+@@ -114,45 +114,54 @@ export function SchedulerPage() {
+   if (loading) return <div className="flex justify-center pt-20"><Spinner size="lg" /></div>
+ 
+   return (
+-    <div className="max-w-2xl space-y-4">
+-      <div className="flex items-center justify-between">
++    <div className="mx-auto max-w-[720px]">
++      <div className="flex items-center justify-between gap-4">
+         <div>
+-          <h2 className="font-semibold text-gray-900">Unscheduled tasks</h2>
+-          <p className="mt-0.5 text-xs text-gray-400">Select tasks to book focus time on your calendar.</p>
++          <h2 className="text-[15.5px] font-bold text-ap-text-primary">Unscheduled tasks</h2>
++          <p className="mt-1 text-[12.5px] text-ap-text-tertiary">Select tasks to book focus time on your calendar.</p>
+         </div>
+         {connected ? (
+           <Button onClick={handlePropose} loading={proposing} disabled={selected.size === 0}>
+-            Schedule {selected.size > 0 ? `(${selected.size})` : ''}
++            Schedule{selected.size > 0 ? ` (${selected.size})` : ''}
+           </Button>
+         ) : (
+-          <Button onClick={handleConnect} loading={connecting} variant="secondary">
++          <Button onClick={handleConnect} loading={connecting} variant="secondary" className="whitespace-nowrap">
+             Connect Google Calendar
+           </Button>
+         )}
+       </div>
+ 
+-      {error && <p className="text-sm text-red-600">{error}</p>}
++      {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
+ 
+-      {tasks.length === 0 && (
+-        <Card className="py-16 text-center text-gray-400">All tasks are scheduled.</Card>
+-      )}
++      <div className="mt-[18px] flex flex-col gap-2.5">
++        {tasks.length === 0 && (
++          <Card className="py-16 text-center text-ap-text-tertiary">All tasks are scheduled.</Card>
++        )}
+ 
+-      {tasks.map(task => (
+-        <Card
+-          key={task.taskId}
+-          className={`cursor-pointer p-4 transition-all ${selected.has(task.taskId) ? 'ring-2 ring-brand-500' : ''}`}
+-          onClick={() => toggle(task.taskId)}
+-        >
+-          <div className="flex items-center gap-3">
+-            <input type="checkbox" readOnly checked={selected.has(task.taskId)} className="h-4 w-4 accent-brand-600" />
+-            <div className="flex-1">
+-              <p className="font-medium text-gray-900">{task.title}</p>
+-              <p className="text-xs text-gray-400">Due {formatDate(task.dueDate)}</p>
++        {tasks.map(task => {
++          const isSelected = selected.has(task.taskId)
++          return (
++            <div
++              key={task.taskId}
++              onClick={() => toggle(task.taskId)}
++              className={`flex cursor-pointer items-center gap-3.5 rounded-2xl border bg-ap-surface px-4 py-3.5 transition-shadow ${
++                isSelected ? 'border-ap-accent shadow-[0_0_0_1px_var(--ap-accent)]' : 'border-ap-border'
++              }`}
++            >
++              <span
++                className={`h-[18px] w-[18px] shrink-0 rounded-[6px] border-2 ${
++                  isSelected ? 'border-ap-accent bg-ap-accent' : 'border-ap-border bg-transparent'
++                }`}
++              />
++              <div className="min-w-0 flex-1">
++                <p className="text-sm font-semibold text-ap-text-primary">{task.title}</p>
++                <p className="text-xs text-ap-text-tertiary">Due {formatDate(task.dueDate)}</p>
++              </div>
++              <Badge label={PRIORITY_LABELS[task.priorityLabel]} className={PRIORITY_COLORS[task.priorityLabel]} />
+             </div>
+-            <Badge label={task.priorityLabel} className={PRIORITY_COLORS[task.priorityLabel]} />
+-          </div>
+-        </Card>
+-      ))}
++          )
++        })}
++      </div>
+ 
+       {proposals && (
+         <ScheduleConfirmDialog
+diff --git a/src/pages/SearchPage.tsx b/src/pages/SearchPage.tsx
+index 80ad0b7..56b06fa 100644
+--- a/src/pages/SearchPage.tsx
++++ b/src/pages/SearchPage.tsx
+@@ -2,8 +2,6 @@ import { useState } from 'react'
+ import { Link } from 'react-router-dom'
+ import { searchMeetings, type SearchResultItem } from '@/services/ai/search'
+ import { useAuthStore } from '@/store/auth.store'
+-import { Input } from '@/components/ui/Input'
+-import { Button } from '@/components/ui/Button'
+ import { Card } from '@/components/ui/Card'
+ 
+ export function SearchPage() {
+@@ -34,37 +32,49 @@ export function SearchPage() {
+   }
+ 
+   return (
+-    <div className="max-w-2xl space-y-4">
+-      <div className="flex gap-2">
+-        <Input
+-          className="flex-1"
+-          placeholder='e.g. "budget approval from last quarter"'
++    <div className="mx-auto max-w-[720px]">
++      <div className="mb-5 flex items-center gap-2.5 rounded-2xl border border-ap-border bg-ap-surface px-[18px] py-3.5">
++        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="shrink-0">
++          <circle cx="10.5" cy="10.5" r="6.5" stroke="var(--ap-text-tertiary)" strokeWidth="1.7" />
++          <path d="M20 20l-4.8-4.8" stroke="var(--ap-text-tertiary)" strokeWidth="1.7" strokeLinecap="round" />
++        </svg>
++        <input
++          className="flex-1 border-none bg-transparent text-[14.5px] text-ap-text-primary outline-none placeholder:text-ap-text-tertiary"
++          placeholder="Search meetings, tasks, decisions…"
+           value={q}
+           onChange={e => setQ(e.target.value)}
+           onKeyDown={e => e.key === 'Enter' && handleSearch()}
+         />
+-        <Button onClick={handleSearch} loading={loading} disabled={!q.trim()}>Search</Button>
++        <button
++          onClick={handleSearch}
++          disabled={loading || !q.trim()}
++          className="shrink-0 rounded-xl bg-ap-accent px-4 py-2 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
++        >
++          {loading ? '…' : 'Search'}
++        </button>
+       </div>
+ 
+-      {error && <p className="text-sm text-red-600">{error}</p>}
++      {error && <p className="mb-4 text-sm text-red-500">{error}</p>}
+ 
+       {answer && (
+-        <Card className="p-4">
+-          <p className="text-sm leading-relaxed text-gray-700">{answer}</p>
+-        </Card>
++        <div className="mb-4 flex gap-2.5 rounded-2xl bg-ap-accent-soft p-[18px]">
++          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="mt-0.5 shrink-0">
++            <path d="M12 3l1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3z" fill="var(--ap-accent)" />
++          </svg>
++          <p className="text-sm leading-relaxed text-ap-text-primary">{answer}</p>
++        </div>
+       )}
+ 
+       {searched && !error && results.length === 0 && (
+-        <p className="text-sm text-gray-400">No matching meetings found.</p>
++        <p className="text-sm text-ap-text-tertiary">No matching meetings found.</p>
+       )}
+ 
+-      <div className="space-y-3">
++      <div className="flex flex-col gap-2">
+         {results.map(r => (
+           <Link key={r.meetingId} to={`/meetings/${r.meetingId}`}>
+-            <Card className="p-4 transition-shadow hover:shadow-md">
+-              <p className="text-sm font-medium text-gray-900">{r.title}</p>
+-              {r.excerpt && <p className="mt-1 text-sm leading-relaxed text-gray-600">{r.excerpt}</p>}
+-              <p className="mt-1 text-xs text-brand-600">View meeting →</p>
++            <Card className="transition-shadow hover:shadow-md dark:hover:shadow-black/30">
++              <p className="mb-1 text-[13.5px] font-semibold text-ap-text-primary">{r.title}</p>
++              {r.excerpt && <p className="text-[13px] leading-relaxed text-ap-text-secondary">{r.excerpt}</p>}
+             </Card>
+           </Link>
+         ))}
+diff --git a/src/pages/SettingsPage.tsx b/src/pages/SettingsPage.tsx
+index 512e502..8d83035 100644
+--- a/src/pages/SettingsPage.tsx
++++ b/src/pages/SettingsPage.tsx
+@@ -1,12 +1,17 @@
+ import { useEffect, useState } from 'react'
+ import { useAuthStore } from '@/store/auth.store'
++import { useThemeStore } from '@/store/theme.store'
+ import { updateUserProfile } from '@/services/firebase/auth'
+ import { getOrganization, updateOrganizationSettings } from '@/services/firebase/organizations'
++import { connectGoogleCalendar } from '@/services/google/auth'
++import { useCalendarStore } from '@/store/calendar.store'
+ import { Card } from '@/components/ui/Card'
+ import { Input } from '@/components/ui/Input'
+ import { Button } from '@/components/ui/Button'
+ import { Avatar } from '@/components/ui/Avatar'
+-import type { Organization } from '@/types'
++import { Badge } from '@/components/ui/Badge'
++import { ACCENTS, ACCENT_ORDER, ACCENT_LABELS } from '@/utils/theme'
++import type { NotificationPrefs, Organization } from '@/types'
+ 
+ const TIMEZONES = [
+   'Asia/Kuala_Lumpur',
+@@ -30,9 +35,30 @@ const DAY_LABELS = [
+   { value: 6, label: 'Sat' },
+ ]
+ 
++const DEFAULT_NOTIF_PREFS: NotificationPrefs = { email: true, push: true, weeklyDigest: false }
++
++function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
++  return (
++    <button
++      onClick={onToggle}
++      className={`relative h-6 w-10 shrink-0 rounded-full p-0.5 transition-colors ${on ? 'bg-ap-accent' : 'bg-ap-surface-alt'}`}
++    >
++      <span
++        className="block h-5 w-5 rounded-full bg-white shadow transition-transform"
++        style={{ transform: on ? 'translateX(16px)' : 'translateX(0)' }}
++      />
++    </button>
++  )
++}
++
+ export function SettingsPage() {
+   const user = useAuthStore(s => s.user)
+   const setUser = useAuthStore(s => s.setUser)
++  const dark = useThemeStore(s => s.dark)
++  const accent = useThemeStore(s => s.accent)
++  const toggleDark = useThemeStore(s => s.toggleDark)
++  const setAccent = useThemeStore(s => s.setAccent)
++  const calendarConnected = useCalendarStore(s => s.isConnected())
+ 
+   const [displayName, setDisplayName] = useState(user?.displayName ?? '')
+   const [timezone, setTimezone] = useState(user?.timezone ?? 'Asia/Kuala_Lumpur')
+@@ -47,6 +73,10 @@ export function SettingsPage() {
+   const [savingOrg, setSavingOrg] = useState(false)
+   const [orgSaved, setOrgSaved] = useState(false)
+ 
++  const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>(user?.notifPrefs ?? DEFAULT_NOTIF_PREFS)
++  const [connecting, setConnecting] = useState(false)
++  const [connectError, setConnectError] = useState('')
++
+   useEffect(() => {
+     if (!user?.orgId) return
+     getOrganization(user.orgId).then(data => {
+@@ -91,75 +121,176 @@ export function SettingsPage() {
+     }
+   }
+ 
++  async function handleToggleNotif(key: keyof NotificationPrefs) {
++    if (!user) return
++    const next = { ...notifPrefs, [key]: !notifPrefs[key] }
++    setNotifPrefs(next)
++    await updateUserProfile(user.uid, { notifPrefs: next })
++    setUser({ ...user, notifPrefs: next })
++  }
++
++  async function handleConnectCalendar() {
++    setConnecting(true)
++    setConnectError('')
++    try {
++      await connectGoogleCalendar()
++    } catch (err) {
++      setConnectError((err as Error).message || 'Failed to connect Google Calendar')
++    } finally {
++      setConnecting(false)
++    }
++  }
++
+   if (!user) return null
+ 
+   return (
+-    <div className="max-w-2xl space-y-6">
+-      <Card className="p-6 space-y-4">
+-        <h2 className="text-sm font-semibold text-gray-900">Your Profile</h2>
+-        <div className="flex items-center gap-3">
+-          <Avatar src={user.photoURL} name={user.displayName} size="lg" />
+-          <p className="text-sm text-gray-400">{user.email}</p>
+-        </div>
+-        <Input label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+-        <div className="flex flex-col gap-1">
+-          <label className="text-sm font-medium text-gray-700">Timezone</label>
+-          <select
+-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500"
+-            value={timezone}
+-            onChange={e => setTimezone(e.target.value)}
+-          >
+-            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+-          </select>
++    <div className="mx-auto flex max-w-[640px] flex-col gap-[18px]">
++      <Card>
++        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Your profile</h3>
++        <div className="mb-4 flex items-center gap-3">
++          <Avatar src={user.photoURL} name={user.displayName || user.email} size="lg" />
++          <p className="text-sm text-ap-text-tertiary">{user.email}</p>
+         </div>
+-        <div className="flex items-center gap-3">
+-          <Button onClick={handleSaveProfile} loading={savingProfile} disabled={!displayName.trim()}>
+-            Save profile
+-          </Button>
+-          {profileSaved && <span className="text-xs text-green-600">Saved</span>}
++        <div className="flex flex-col gap-3.5">
++          <Input label="Display name" value={displayName} onChange={e => setDisplayName(e.target.value)} />
++          <div className="flex flex-col gap-1.5">
++            <label className="text-[13px] font-semibold text-ap-text-secondary">Timezone</label>
++            <select
++              className="rounded-xl border border-ap-border bg-ap-surface-alt px-3.5 py-3 text-sm text-ap-text-primary outline-none focus:border-ap-accent"
++              value={timezone}
++              onChange={e => setTimezone(e.target.value)}
++            >
++              {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
++            </select>
++          </div>
++          <div className="flex items-center gap-3">
++            <Button onClick={handleSaveProfile} loading={savingProfile} disabled={!displayName.trim()}>
++              Save profile
++            </Button>
++            {profileSaved && <span className="text-xs font-semibold text-emerald-600">Saved</span>}
++          </div>
+         </div>
+       </Card>
+ 
+-      {org && (
+-        <Card className="p-6 space-y-4">
+-          <h2 className="text-sm font-semibold text-gray-900">Organization</h2>
++      <Card>
++        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Workspace</h3>
++        <div className="flex flex-col gap-3.5">
+           <Input label="Organization name" value={orgName} onChange={e => setOrgName(e.target.value)} />
++          <div className="flex items-center gap-3">
++            <Button onClick={handleSaveOrg} loading={savingOrg} disabled={!orgName.trim()}>Save workspace</Button>
++            {orgSaved && <span className="text-xs font-semibold text-emerald-600">Saved</span>}
++          </div>
++        </div>
++      </Card>
+ 
+-          <div className="grid grid-cols-2 gap-3">
+-            <Input label="Work day start" type="time" value={workDayStart} onChange={e => setWorkDayStart(e.target.value)} />
+-            <Input label="Work day end" type="time" value={workDayEnd} onChange={e => setWorkDayEnd(e.target.value)} />
++      <Card>
++        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Integrations</h3>
++        <div className="flex flex-col gap-3">
++          <div className="flex items-center gap-3">
++            <span className={`h-[9px] w-[9px] shrink-0 rounded-full ${calendarConnected ? 'bg-[#34A853]' : 'bg-ap-text-tertiary'}`} />
++            <span className="flex-1 text-[13.5px] font-semibold text-ap-text-primary">Google Calendar</span>
++            {calendarConnected ? (
++              <Badge label="Connected" className="bg-emerald-500/14 text-emerald-600 dark:text-emerald-400" />
++            ) : (
++              <Button size="sm" variant="secondary" onClick={handleConnectCalendar} loading={connecting}>Connect</Button>
++            )}
+           </div>
++          <div className="flex items-center gap-3">
++            <span className="h-[9px] w-[9px] shrink-0 rounded-full bg-ap-text-tertiary" />
++            <span className="flex-1 text-[13.5px] font-semibold text-ap-text-primary">Zoom</span>
++            <Badge label="Not connected" className="bg-ap-surface-alt text-ap-text-tertiary" />
++          </div>
++          <div className="flex items-center gap-3">
++            <span className="h-[9px] w-[9px] shrink-0 rounded-full bg-ap-text-tertiary" />
++            <span className="flex-1 text-[13.5px] font-semibold text-ap-text-primary">Microsoft 365</span>
++            <Badge label="Not connected" className="bg-ap-surface-alt text-ap-text-tertiary" />
++          </div>
++        </div>
++        {connectError && <p className="mt-3 text-xs text-red-500">{connectError}</p>}
++      </Card>
++
++      {org && (
++        <Card>
++          <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Working hours</h3>
++          <div className="flex flex-col gap-3.5">
++            <div className="grid grid-cols-2 gap-3">
++              <Input label="Work day start" type="time" value={workDayStart} onChange={e => setWorkDayStart(e.target.value)} />
++              <Input label="Work day end" type="time" value={workDayEnd} onChange={e => setWorkDayEnd(e.target.value)} />
++            </div>
++            <div className="flex flex-col gap-1.5">
++              <label className="text-[13px] font-semibold text-ap-text-secondary">Work days</label>
++              <div className="flex gap-1.5">
++                {DAY_LABELS.map(d => (
++                  <button
++                    key={d.value}
++                    type="button"
++                    onClick={() => toggleDay(d.value)}
++                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
++                      workDays.includes(d.value)
++                        ? 'bg-ap-accent text-white'
++                        : 'bg-ap-surface-alt text-ap-text-secondary'
++                    }`}
++                  >
++                    {d.label}
++                  </button>
++                ))}
++              </div>
++            </div>
++            <p className="text-xs text-ap-text-tertiary">These hours control when the Smart Scheduler books focus time.</p>
++            <div className="flex items-center gap-3">
++              <Button onClick={handleSaveOrg} loading={savingOrg} disabled={!orgName.trim()}>Save workspace</Button>
++              {orgSaved && <span className="text-xs font-semibold text-emerald-600">Saved</span>}
++            </div>
++          </div>
++        </Card>
++      )}
+ 
+-          <div className="flex flex-col gap-1">
+-            <label className="text-sm font-medium text-gray-700">Work days</label>
+-            <div className="flex gap-1.5">
+-              {DAY_LABELS.map(d => (
++      <Card>
++        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Appearance</h3>
++        <div className="flex flex-col gap-4">
++          <div className="flex items-center justify-between">
++            <span className="text-[13.5px] text-ap-text-primary">Dark mode</span>
++            <Toggle on={dark} onToggle={toggleDark} />
++          </div>
++          <div>
++            <label className="mb-2 block text-[13px] font-semibold text-ap-text-secondary">Accent color</label>
++            <div className="flex gap-2.5">
++              {ACCENT_ORDER.map(key => (
+                 <button
+-                  key={d.value}
++                  key={key}
+                   type="button"
+-                  onClick={() => toggleDay(d.value)}
+-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+-                    workDays.includes(d.value)
+-                      ? 'bg-brand-600 text-white'
+-                      : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+-                  }`}
+-                >
+-                  {d.label}
+-                </button>
++                  aria-label={ACCENT_LABELS[key]}
++                  onClick={() => setAccent(key)}
++                  className="h-8 w-8 rounded-full transition-transform"
++                  style={{
++                    background: ACCENTS[key].base,
++                    outline: accent === key ? `2px solid ${ACCENTS[key].base}` : 'none',
++                    outlineOffset: 2,
++                  }}
++                />
+               ))}
+             </div>
+           </div>
++        </div>
++      </Card>
+ 
+-          <p className="text-xs text-gray-400">These hours control when the Smart Scheduler books focus time.</p>
+-
+-          <div className="flex items-center gap-3">
+-            <Button onClick={handleSaveOrg} loading={savingOrg} disabled={!orgName.trim()}>
+-              Save organization
+-            </Button>
+-            {orgSaved && <span className="text-xs text-green-600">Saved</span>}
++      <Card>
++        <h3 className="mb-1 text-[13.5px] font-bold text-ap-text-primary">Notifications</h3>
++        <div className="mt-3 flex flex-col gap-3.5">
++          <div className="flex items-center justify-between">
++            <span className="text-[13.5px] text-ap-text-primary">Email digests</span>
++            <Toggle on={notifPrefs.email} onToggle={() => handleToggleNotif('email')} />
+           </div>
+-        </Card>
+-      )}
++          <div className="flex items-center justify-between">
++            <span className="text-[13.5px] text-ap-text-primary">Push notifications</span>
++            <Toggle on={notifPrefs.push} onToggle={() => handleToggleNotif('push')} />
++          </div>
++          <div className="flex items-center justify-between">
++            <span className="text-[13.5px] text-ap-text-primary">Weekly accountability report</span>
++            <Toggle on={notifPrefs.weeklyDigest} onToggle={() => handleToggleNotif('weeklyDigest')} />
++          </div>
++        </div>
++      </Card>
+     </div>
+   )
+ }
+diff --git a/src/pages/TasksPage.tsx b/src/pages/TasksPage.tsx
+index 15d0698..c2fd85c 100644
+--- a/src/pages/TasksPage.tsx
++++ b/src/pages/TasksPage.tsx
+@@ -1,50 +1,80 @@
+-import { useEffect } from 'react'
++import { useEffect, useMemo, useState } from 'react'
+ import { useTasks } from '@/hooks/useTasks'
+ import { Card } from '@/components/ui/Card'
+ import { Badge } from '@/components/ui/Badge'
+ import { Spinner } from '@/components/ui/Spinner'
+-import { PRIORITY_COLORS } from '@/utils/task'
++import { PRIORITY_COLORS, PRIORITY_LABELS } from '@/utils/task'
+ import { formatDate } from '@/utils/date'
++import type { TaskStatus } from '@/types'
++
++const FILTERS: { key: 'all' | TaskStatus; label: string }[] = [
++  { key: 'all', label: 'All' },
++  { key: 'todo', label: 'To do' },
++  { key: 'in_progress', label: 'In progress' },
++  { key: 'completed', label: 'Completed' },
++]
+ 
+ export function TasksPage() {
+   const { tasks, loading, fetchMyTasks, changeStatus } = useTasks()
++  const [filter, setFilter] = useState<'all' | TaskStatus>('all')
+ 
+   useEffect(() => { fetchMyTasks() }, [fetchMyTasks])
+ 
++  const visibleTasks = useMemo(
++    () => tasks.filter(t => filter === 'all' || t.status === filter),
++    [tasks, filter],
++  )
++
+   if (loading) return <div className="flex justify-center pt-20"><Spinner size="lg" /></div>
+ 
+   return (
+-    <div className="space-y-3">
+-      <p className="text-sm text-gray-500">{tasks.length} tasks assigned to you</p>
+-
+-      {tasks.length === 0 && (
+-        <Card className="py-16 text-center text-gray-400">No tasks yet.</Card>
+-      )}
+-
+-      {tasks.map(task => (
+-        <Card key={task.taskId} className="p-4">
+-          <div className="flex items-start justify-between gap-4">
+-            <div className="flex-1">
+-              <p className="font-medium text-gray-900">{task.title}</p>
+-              {task.description && <p className="mt-0.5 text-xs text-gray-500">{task.description}</p>}
+-              <p className="mt-1 text-xs text-gray-400">Due {formatDate(task.dueDate)}</p>
+-            </div>
+-            <div className="flex flex-col items-end gap-1.5">
+-              <Badge label={task.priorityLabel} className={PRIORITY_COLORS[task.priorityLabel]} />
+-              <select
+-                className="rounded border border-gray-200 px-2 py-0.5 text-xs text-gray-600 focus:outline-none"
+-                value={task.status}
+-                onChange={e => changeStatus(task.taskId, e.target.value as never)}
+-              >
+-                <option value="todo">To do</option>
+-                <option value="in_progress">In progress</option>
+-                <option value="completed">Completed</option>
+-                <option value="cancelled">Cancelled</option>
+-              </select>
++    <div className="mx-auto max-w-[780px]">
++      <div className="mb-[18px] flex gap-1.5">
++        {FILTERS.map(f => (
++          <button
++            key={f.key}
++            onClick={() => setFilter(f.key)}
++            className={`shrink-0 whitespace-nowrap rounded-[10px] border px-3.5 py-1.5 text-[12.5px] font-semibold transition-colors ${
++              filter === f.key
++                ? 'border-transparent bg-ap-accent text-white'
++                : 'border-ap-border bg-ap-surface text-ap-text-secondary'
++            }`}
++          >
++            {f.label}
++          </button>
++        ))}
++      </div>
++
++      <div className="flex flex-col gap-2.5">
++        {visibleTasks.length === 0 && (
++          <Card className="py-16 text-center text-ap-text-tertiary">No tasks in this view.</Card>
++        )}
++
++        {visibleTasks.map(task => (
++          <Card key={task.taskId}>
++            <div className="flex items-start justify-between gap-4">
++              <div className="min-w-0 flex-1">
++                <p className="text-[14.5px] font-semibold text-ap-text-primary">{task.title}</p>
++                {task.description && <p className="mt-0.5 text-xs text-ap-text-secondary">{task.description}</p>}
++                <p className="mt-1 text-[12.5px] text-ap-text-tertiary">Due {formatDate(task.dueDate)}</p>
++              </div>
++              <div className="flex shrink-0 flex-col items-end gap-2">
++                <Badge label={PRIORITY_LABELS[task.priorityLabel]} className={PRIORITY_COLORS[task.priorityLabel]} />
++                <select
++                  className="rounded-lg border border-ap-border bg-ap-surface-alt px-2 py-1 text-xs text-ap-text-primary outline-none"
++                  value={task.status}
++                  onChange={e => changeStatus(task.taskId, e.target.value as TaskStatus)}
++                >
++                  <option value="todo">To do</option>
++                  <option value="in_progress">In progress</option>
++                  <option value="completed">Completed</option>
++                  <option value="cancelled">Cancelled</option>
++                </select>
++              </div>
+             </div>
+-          </div>
+-        </Card>
+-      ))}
++          </Card>
++        ))}
++      </div>
+     </div>
+   )
+ }
+diff --git a/src/pages/auth/LoginPage.tsx b/src/pages/auth/LoginPage.tsx
+index 24499ad..d31b4ca 100644
+--- a/src/pages/auth/LoginPage.tsx
++++ b/src/pages/auth/LoginPage.tsx
+@@ -1,6 +1,5 @@
+ import { useNavigate } from 'react-router-dom'
+ import { signInWithGoogle } from '@/services/firebase/auth'
+-import { Button } from '@/components/ui/Button'
+ import { useState } from 'react'
+ 
+ export function LoginPage() {
+@@ -22,21 +21,37 @@ export function LoginPage() {
+   }
+ 
+   return (
+-    <div className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+-      <div className="mb-8 text-center">
+-        <h1 className="text-2xl font-bold text-gray-900">ActionPilot AI</h1>
+-        <p className="mt-2 text-sm text-gray-500">Meetings → Action. Automatically.</p>
++    <div className="w-[380px] max-w-[90vw] animate-ap-fade-up rounded-3xl border border-ap-border bg-ap-surface p-9 text-center shadow-[0_20px_60px_rgba(0,0,0,0.12)]">
++      <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-[18px] bg-gradient-to-br from-ap-accent to-ap-accent-dark shadow-[0_8px_20px_var(--ap-accent-soft)]">
++        <svg width="30" height="30" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="7" stroke="white" strokeWidth="1.8" /><circle cx="12" cy="12" r="2.2" fill="white" /></svg>
+       </div>
++      <h1 className="mb-1.5 text-[22px] font-bold tracking-tight text-ap-text-primary">ActionPilot AI</h1>
++      <p className="mb-7 text-sm leading-relaxed text-ap-text-secondary">
++        Turn meetings into tasks, schedules, and accountability — automatically.
++      </p>
+ 
+-      <Button className="w-full justify-center" variant="secondary" onClick={handleGoogleSignIn} loading={loading}>
+-        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="h-4 w-4" />
++      <button
++        onClick={handleGoogleSignIn}
++        disabled={loading}
++        className="flex w-full items-center justify-center gap-2.5 rounded-[14px] bg-ap-text-primary px-4 py-[13px] text-[15px] font-semibold text-ap-bg transition-opacity hover:opacity-90 disabled:opacity-60"
++      >
++        {loading ? (
++          <span className="h-[18px] w-[18px] animate-spin rounded-full border-2 border-current border-t-transparent" />
++        ) : (
++          <svg width="18" height="18" viewBox="0 0 24 24">
++            <path fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.63h6.47a5.53 5.53 0 0 1-2.4 3.63v3h3.88c2.27-2.09 3.57-5.17 3.57-8.81z" />
++            <path fill="#34A853" d="M12 24c3.24 0 5.96-1.08 7.95-2.92l-3.88-3c-1.08.72-2.45 1.15-4.07 1.15-3.13 0-5.78-2.11-6.73-4.95H1.27v3.1A12 12 0 0 0 12 24z" />
++            <path fill="#FBBC05" d="M5.27 14.28A7.2 7.2 0 0 1 4.89 12c0-.79.14-1.56.38-2.28v-3.1H1.27A12 12 0 0 0 0 12c0 1.94.46 3.77 1.27 5.38z" />
++            <path fill="#EA4335" d="M12 4.77c1.77 0 3.35.61 4.6 1.8l3.44-3.44C17.95 1.19 15.24 0 12 0A12 12 0 0 0 1.27 6.62l4 3.1C6.22 6.88 8.87 4.77 12 4.77z" />
++          </svg>
++        )}
+         Continue with Google
+-      </Button>
++      </button>
+ 
+-      {error && <p className="mt-3 text-center text-xs text-red-600">{error}</p>}
++      {error && <p className="mt-3 text-center text-xs text-red-500">{error}</p>}
+ 
+-      <p className="mt-6 text-center text-xs text-gray-400">
+-        By continuing you agree to our Terms of Service.
++      <p className="mt-5 text-xs text-ap-text-tertiary">
++        SSO available on Enterprise. Your data is never used to train public models.
+       </p>
+     </div>
+   )
+diff --git a/src/pages/auth/OnboardingPage.tsx b/src/pages/auth/OnboardingPage.tsx
+index 0321803..f901bc9 100644
+--- a/src/pages/auth/OnboardingPage.tsx
++++ b/src/pages/auth/OnboardingPage.tsx
+@@ -1,6 +1,6 @@
+ import { useState } from 'react'
+ import { useNavigate } from 'react-router-dom'
+-import { createOrganization } from '@/services/firebase/organizations'
++import { createOrganization, updateOrganizationSettings } from '@/services/firebase/organizations'
+ import { useAuthStore } from '@/store/auth.store'
+ import { Button } from '@/components/ui/Button'
+ import { Input } from '@/components/ui/Input'
+@@ -8,34 +8,96 @@ import { Input } from '@/components/ui/Input'
+ export function OnboardingPage() {
+   const navigate = useNavigate()
+   const user = useAuthStore(s => s.user)
+-  const [name, setName] = useState('')
+-  const [domain, setDomain] = useState('')
++  const [step, setStep] = useState(0)
++  const [orgName, setOrgName] = useState('')
++  const [workDayStart, setWorkDayStart] = useState('09:00')
++  const [workDayEnd, setWorkDayEnd] = useState('17:30')
+   const [loading, setLoading] = useState(false)
++  const [error, setError] = useState('')
+ 
+-  async function handleCreate() {
+-    if (!user || !name.trim()) return
++  async function handleFinish() {
++    if (!user || !orgName.trim()) return
+     setLoading(true)
++    setError('')
+     try {
+-      await createOrganization(user.uid, name.trim(), domain.trim())
++      const orgId = await createOrganization(user.uid, orgName.trim(), '')
++      await updateOrganizationSettings(orgId, { settings: { workDayStart, workDayEnd } })
+       navigate('/meetings')
++    } catch (err) {
++      setError((err as Error).message || 'Failed to create workspace')
+     } finally {
+       setLoading(false)
+     }
+   }
+ 
+   return (
+-    <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+-      <h2 className="mb-1 text-xl font-bold text-gray-900">Set up your workspace</h2>
+-      <p className="mb-6 text-sm text-gray-500">You can invite teammates after setup.</p>
++    <div className="w-[440px] max-w-[90vw] animate-ap-fade-up rounded-3xl border border-ap-border bg-ap-surface p-9 shadow-[0_20px_60px_rgba(0,0,0,0.12)]">
++      <p className="mb-1 text-[12px] font-bold uppercase tracking-wider text-ap-accent">Step {step + 1} of 2</p>
++      <h1 className="mb-6 text-[22px] font-bold tracking-tight text-ap-text-primary">
++        {step === 0 ? 'Set up your workspace' : 'Set your working hours'}
++      </h1>
+ 
+-      <div className="space-y-4">
+-        <Input label="Organisation name" value={name} onChange={e => setName(e.target.value)} placeholder="Acme Sdn. Bhd." />
+-        <Input label="Domain (optional)" value={domain} onChange={e => setDomain(e.target.value)} placeholder="acme.com" />
+-      </div>
++      {step === 0 && (
++        <div className="flex flex-col gap-3.5">
++          <Input label="Workspace name" value={orgName} onChange={e => setOrgName(e.target.value)} placeholder="Acme Robotics" />
++          <div className="grid grid-cols-2 gap-2.5">
++            <button
++              type="button"
++              className="flex items-center gap-2 rounded-xl border border-ap-border bg-ap-surface-alt px-3 py-2.5 text-[13px] font-semibold text-ap-text-primary"
++            >
++              <span className="h-2 w-2 rounded-full bg-[#34A853]" /> Google Workspace
++            </button>
++            <button
++              type="button"
++              className="flex items-center gap-2 rounded-xl border border-ap-border bg-ap-surface-alt px-3 py-2.5 text-[13px] font-semibold text-ap-text-primary"
++            >
++              <span className="h-2 w-2 rounded-full bg-[#2D8CFF]" /> Zoom
++            </button>
++          </div>
++        </div>
++      )}
++
++      {step === 1 && (
++        <div className="flex flex-col gap-3.5">
++          <div>
++            <label className="mb-1.5 block text-[13px] font-semibold text-ap-text-secondary">Work day</label>
++            <div className="flex items-center gap-2.5">
++              <input
++                type="time"
++                value={workDayStart}
++                onChange={e => setWorkDayStart(e.target.value)}
++                className="flex-1 rounded-xl border border-ap-border bg-ap-surface-alt px-3.5 py-3 text-sm text-ap-text-primary"
++              />
++              <span className="text-ap-text-tertiary">to</span>
++              <input
++                type="time"
++                value={workDayEnd}
++                onChange={e => setWorkDayEnd(e.target.value)}
++                className="flex-1 rounded-xl border border-ap-border bg-ap-surface-alt px-3.5 py-3 text-sm text-ap-text-primary"
++              />
++            </div>
++          </div>
++          <p className="text-[13px] leading-relaxed text-ap-text-secondary">
++            The Smart Scheduler will only book focus time inside these hours, Monday–Friday.
++          </p>
++        </div>
++      )}
+ 
+-      <Button className="mt-6 w-full justify-center" onClick={handleCreate} loading={loading} disabled={!name.trim()}>
+-        Create workspace
+-      </Button>
++      {error && <p className="mt-4 text-xs text-red-500">{error}</p>}
++
++      <div className="mt-7 flex gap-2.5">
++        {step > 0 && (
++          <Button variant="secondary" onClick={() => setStep(0)}>Back</Button>
++        )}
++        <Button
++          className="flex-1 justify-center"
++          onClick={() => (step === 0 ? setStep(1) : handleFinish())}
++          disabled={!orgName.trim()}
++          loading={loading}
++        >
++          {step === 0 ? 'Continue' : 'Finish setup'}
++        </Button>
++      </div>
+     </div>
+   )
+ }
+diff --git a/src/services/firebase/auth.ts b/src/services/firebase/auth.ts
+index 055d9fc..a16f1ef 100644
+--- a/src/services/firebase/auth.ts
++++ b/src/services/firebase/auth.ts
+@@ -44,6 +44,7 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
+     role:              'member',
+     calendarConnected: false,
+     timezone:          'Asia/Kuala_Lumpur',
++    notifPrefs:        { email: true, push: true, weeklyDigest: false },
+     createdAt:         serverTimestamp(),
+     lastActiveAt:      serverTimestamp(),
+   }
+@@ -55,7 +56,7 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
+ 
+ export async function updateUserProfile(
+   uid: string,
+-  updates: Partial<Pick<User, 'displayName' | 'timezone'>>,
++  updates: Partial<Pick<User, 'displayName' | 'timezone' | 'notifPrefs'>>,
+ ): Promise<void> {
+   await setDoc(doc(db, 'users', uid), updates, { merge: true })
+ }
+diff --git a/src/store/theme.store.ts b/src/store/theme.store.ts
+new file mode 100644
+index 0000000..ddc1acd
+--- /dev/null
++++ b/src/store/theme.store.ts
+@@ -0,0 +1,40 @@
++import { create } from 'zustand'
++import { persist } from 'zustand/middleware'
++import { applyAccent, type AccentKey } from '@/utils/theme'
++
++interface ThemeState {
++  dark: boolean
++  accent: AccentKey
++  toggleDark: () => void
++  setAccent: (accent: AccentKey) => void
++  hydrate: () => void
++}
++
++function applyDarkClass(dark: boolean) {
++  document.documentElement.classList.toggle('dark', dark)
++  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
++}
++
++export const useThemeStore = create<ThemeState>()(
++  persist(
++    (set, get) => ({
++      dark: false,
++      accent: 'indigo',
++      toggleDark: () => {
++        const dark = !get().dark
++        set({ dark })
++        applyDarkClass(dark)
++        applyAccent(get().accent, dark)
++      },
++      setAccent: accent => {
++        set({ accent })
++        applyAccent(accent, get().dark)
++      },
++      hydrate: () => {
++        applyDarkClass(get().dark)
++        applyAccent(get().accent, get().dark)
++      },
++    }),
++    { name: 'actionpilot-theme' },
++  ),
++)
+diff --git a/src/types/index.ts b/src/types/index.ts
+index fd85984..1e8fb73 100644
+--- a/src/types/index.ts
++++ b/src/types/index.ts
+@@ -1,4 +1,4 @@
+-export type { User, UserRole } from './user'
++export type { User, UserRole, NotificationPrefs } from './user'
+ export type { Organization, OrgPlan, OrgSettings } from './organization'
+ export type { Meeting, MeetingPlatform, MeetingStatus } from './meeting'
+ export type { Task, TaskStatus, TaskPriority, TaskPriorityLabel } from './task'
+diff --git a/src/types/user.ts b/src/types/user.ts
+index a0e1379..206d6c4 100644
+--- a/src/types/user.ts
++++ b/src/types/user.ts
+@@ -2,6 +2,12 @@ import type { Timestamp } from 'firebase/firestore'
+ 
+ export type UserRole = 'owner' | 'admin' | 'manager' | 'member'
+ 
++export interface NotificationPrefs {
++  email: boolean
++  push: boolean
++  weeklyDigest: boolean
++}
++
+ export interface User {
+   uid: string
+   displayName: string
+@@ -11,6 +17,7 @@ export interface User {
+   role: UserRole
+   calendarConnected: boolean
+   timezone: string
++  notifPrefs: NotificationPrefs
+   createdAt: Timestamp
+   lastActiveAt: Timestamp
+ }
+diff --git a/src/utils/avatarColor.ts b/src/utils/avatarColor.ts
+index 10799af..9103363 100644
+--- a/src/utils/avatarColor.ts
++++ b/src/utils/avatarColor.ts
+@@ -1,10 +1,10 @@
+ const PALETTE = [
+-  'bg-indigo-100 text-indigo-700',
+-  'bg-sky-100 text-sky-700',
+-  'bg-emerald-100 text-emerald-700',
+-  'bg-amber-100 text-amber-700',
+-  'bg-rose-100 text-rose-700',
+-  'bg-violet-100 text-violet-700',
++  'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400',
++  'bg-sky-500/15 text-sky-600 dark:text-sky-400',
++  'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
++  'bg-amber-500/15 text-amber-600 dark:text-amber-400',
++  'bg-rose-500/15 text-rose-600 dark:text-rose-400',
++  'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+ ]
+ 
+ export function colorForSeed(seed: string): string {
+diff --git a/src/utils/status.ts b/src/utils/status.ts
+new file mode 100644
+index 0000000..cf0c767
+--- /dev/null
++++ b/src/utils/status.ts
+@@ -0,0 +1,17 @@
++import type { MeetingStatus } from '@/types'
++
++export const MEETING_STATUS_LABELS: Record<MeetingStatus, string> = {
++  ready: 'Ready',
++  transcribing: 'Transcribing',
++  extracting: 'Extracting',
++  uploading: 'Uploading',
++  error: 'Error',
++}
++
++export const MEETING_STATUS_COLORS: Record<MeetingStatus, string> = {
++  ready:        'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
++  transcribing: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
++  extracting:   'bg-purple-500/15 text-purple-600 dark:text-purple-400',
++  uploading:    'bg-ap-text-tertiary/15 text-ap-text-secondary',
++  error:        'bg-red-500/15 text-red-600 dark:text-red-400',
++}
+diff --git a/src/utils/task.ts b/src/utils/task.ts
+index f4c5ecc..d40d80f 100644
+--- a/src/utils/task.ts
++++ b/src/utils/task.ts
+@@ -1,18 +1,25 @@
+ import type { TaskPriority, TaskPriorityLabel, TaskStatus } from '@/types'
+ 
++export const PRIORITY_LABELS: Record<TaskPriorityLabel, string> = {
++  critical: 'Urgent',
++  high:     'High',
++  medium:   'Medium',
++  low:      'Low',
++}
++
+ export const PRIORITY_COLORS: Record<TaskPriorityLabel, string> = {
+-  critical: 'bg-red-100 text-red-700',
+-  high:     'bg-orange-100 text-orange-700',
+-  medium:   'bg-yellow-100 text-yellow-700',
+-  low:      'bg-gray-100 text-gray-600',
++  critical: 'bg-red-500/12 text-red-600 dark:text-red-400',
++  high:     'bg-amber-500/12 text-amber-600 dark:text-amber-400',
++  medium:   'bg-ap-accent-soft text-ap-accent',
++  low:      'bg-ap-text-tertiary/12 text-ap-text-secondary',
+ }
+ 
+ export const STATUS_COLORS: Record<TaskStatus, string> = {
+-  todo:        'bg-gray-100 text-gray-600',
+-  in_progress: 'bg-blue-100 text-blue-700',
+-  completed:   'bg-green-100 text-green-700',
+-  overdue:     'bg-red-100 text-red-700',
+-  cancelled:   'bg-gray-100 text-gray-400',
++  todo:        'bg-ap-text-tertiary/12 text-ap-text-secondary',
++  in_progress: 'bg-blue-500/12 text-blue-600 dark:text-blue-400',
++  completed:   'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400',
++  overdue:     'bg-red-500/12 text-red-600 dark:text-red-400',
++  cancelled:   'bg-ap-text-tertiary/12 text-ap-text-tertiary',
+ }
+ 
+ export function priorityFromNumber(p: TaskPriority): TaskPriorityLabel {
+diff --git a/src/utils/theme.ts b/src/utils/theme.ts
+new file mode 100644
+index 0000000..ffa904d
+--- /dev/null
++++ b/src/utils/theme.ts
+@@ -0,0 +1,32 @@
++export type AccentKey = 'indigo' | 'teal' | 'coral' | 'violet'
++
++interface AccentDef {
++  base: string
++  dark: string
++  soft: string
++  softDark: string
++}
++
++export const ACCENTS: Record<AccentKey, AccentDef> = {
++  indigo: { base: '#4f46e5', dark: '#7c76f0', soft: 'rgba(79,70,229,0.12)', softDark: 'rgba(124,118,240,0.16)' },
++  teal:   { base: '#0d9488', dark: '#2dd4bf', soft: 'rgba(13,148,136,0.12)', softDark: 'rgba(45,212,191,0.16)' },
++  coral:  { base: '#e2543f', dark: '#ff8266', soft: 'rgba(226,84,63,0.12)', softDark: 'rgba(255,130,102,0.16)' },
++  violet: { base: '#8b5cf6', dark: '#a78bfa', soft: 'rgba(139,92,246,0.12)', softDark: 'rgba(167,139,250,0.16)' },
++}
++
++export const ACCENT_ORDER: AccentKey[] = ['indigo', 'violet', 'coral', 'teal']
++
++export const ACCENT_LABELS: Record<AccentKey, string> = {
++  indigo: 'Indigo',
++  teal: 'Teal',
++  coral: 'Coral',
++  violet: 'Violet',
++}
++
++export function applyAccent(accent: AccentKey, dark: boolean) {
++  const def = ACCENTS[accent] ?? ACCENTS.indigo
++  const root = document.documentElement.style
++  root.setProperty('--ap-accent', def.base)
++  root.setProperty('--ap-accent-dark', def.dark)
++  root.setProperty('--ap-accent-soft', dark ? def.softDark : def.soft)
++}
+diff --git a/tailwind.config.ts b/tailwind.config.ts
+index ef66094..ea2c9a9 100644
+--- a/tailwind.config.ts
++++ b/tailwind.config.ts
+@@ -1,6 +1,7 @@
+ import type { Config } from 'tailwindcss'
+ 
+ export default {
++  darkMode: 'class',
+   content: ['./index.html', './src/**/*.{ts,tsx}'],
+   theme: {
+     extend: {
+@@ -13,9 +14,39 @@ export default {
+           700: '#4338ca',
+           900: '#312e81',
+         },
++        ap: {
++          bg: 'var(--ap-bg)',
++          surface: 'var(--ap-surface)',
++          'surface-alt': 'var(--ap-surface-alt)',
++          border: 'var(--ap-border)',
++          text: {
++            primary: 'var(--ap-text-primary)',
++            secondary: 'var(--ap-text-secondary)',
++            tertiary: 'var(--ap-text-tertiary)',
++          },
++          accent: 'var(--ap-accent)',
++          'accent-dark': 'var(--ap-accent-dark)',
++          'accent-soft': 'var(--ap-accent-soft)',
++        },
+       },
+       fontFamily: {
+-        sans: ['Inter', 'system-ui', 'sans-serif'],
++        sans: [
++          '-apple-system', 'BlinkMacSystemFont', '"SF Pro Text"', 'Inter', '"Helvetica Neue"', 'Arial', 'sans-serif',
++        ],
++      },
++      keyframes: {
++        'ap-fade-up': {
++          from: { opacity: '0', transform: 'translateY(6px)' },
++          to: { opacity: '1', transform: 'translateY(0)' },
++        },
++        'ap-pulse': {
++          '0%, 100%': { opacity: '1' },
++          '50%': { opacity: '0.35' },
++        },
++      },
++      animation: {
++        'ap-fade-up': 'ap-fade-up 0.5s ease',
++        'ap-pulse': 'ap-pulse 1.2s ease-in-out infinite',
+       },
+     },
+   },
+-- 
+2.43.0
+

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button } from '@/components/ui/Button'
 import { speechLangFor, type TranscriptLanguage } from '@/utils/language'
 
 type SpeechRecognitionCtor = new () => SpeechRecognition
@@ -56,8 +55,17 @@ export function MicDictation({ onResult, language }: Props) {
   if (!supported) return null
 
   return (
-    <Button type="button" variant={listening ? 'danger' : 'secondary'} size="sm" onClick={toggle}>
-      {listening ? '● Stop dictation' : '🎤 Dictate'}
-    </Button>
+    <button
+      type="button"
+      onClick={toggle}
+      className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-[11px] text-[12.5px] font-semibold ${
+        listening
+          ? 'border-transparent bg-red-600 text-white'
+          : 'border-ap-border bg-ap-surface text-ap-text-primary'
+      }`}
+    >
+      <span className={`h-[9px] w-[9px] rounded-full ${listening ? 'bg-white' : 'bg-ap-text-tertiary'}`} />
+      {listening ? 'Stop dictation' : 'Live dictation'}
+    </button>
   )
 }
