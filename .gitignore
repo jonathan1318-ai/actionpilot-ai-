@@ -1,6 +1,7 @@
 node_modules
 dist
 .env.local
+.env.production
 .env*.local
 functions/node_modules
 functions/lib
