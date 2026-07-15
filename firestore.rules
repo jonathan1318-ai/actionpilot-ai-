@@ -18,9 +18,49 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['owner', 'admin'];
     }
 
+    function inviteDoc(orgId) {
+      return get(/databases/$(database)/documents/invites/$(orgId + '__' + request.auth.token.email.lower()));
+    }
+
+    // A signed-in user may only set orgId/role on their own user doc when either:
+    // (a) they own the organization they're pointing at (first-time "create my own workspace"), or
+    // (b) a matching pending invite exists for their email at that org + role (accepting an invite).
+    function selfOrgChangeAllowed(orgId, role) {
+      return (
+        role == 'owner' &&
+        exists(/databases/$(database)/documents/organizations/$(orgId)) &&
+        get(/databases/$(database)/documents/organizations/$(orgId)).data.ownerId == request.auth.uid
+      ) || (
+        exists(/databases/$(database)/documents/invites/$(orgId + '__' + request.auth.token.email.lower())) &&
+        inviteDoc(orgId).data.status == 'pending' &&
+        inviteDoc(orgId).data.role == role
+      );
+    }
+
     match /users/{userId} {
       allow read:   if isSignedIn() && request.auth.uid == userId;
-      allow write:  if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && request.auth.uid == userId && (
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['orgId', 'role']) ||
+        selfOrgChangeAllowed(request.resource.data.orgId, request.resource.data.role)
+      );
+    }
+
+    match /invites/{inviteId} {
+      allow read: if isSignedIn() && (
+        request.auth.token.email.lower() == resource.data.email ||
+        isOrgAdmin(resource.data.orgId)
+      );
+      allow create: if isOrgAdmin(request.resource.data.orgId) &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.invitedBy == request.auth.uid;
+      allow update: if isSignedIn() && (
+        isOrgAdmin(resource.data.orgId) ||
+        (request.auth.token.email.lower() == resource.data.email &&
+         resource.data.status == 'pending' &&
+         request.resource.data.status == 'accepted')
+      );
+      allow delete: if isOrgAdmin(resource.data.orgId);
     }
 
     match /organizations/{orgId} {

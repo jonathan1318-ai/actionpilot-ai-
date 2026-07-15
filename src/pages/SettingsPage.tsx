@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { useAuthStore } from '@/store/auth.store'
 import { useThemeStore } from '@/store/theme.store'
 import { updateUserProfile } from '@/services/firebase/auth'
-import { getOrganization, updateOrganizationSettings } from '@/services/firebase/organizations'
+import { getOrganization, updateOrganizationSettings, listOrgUsers } from '@/services/firebase/organizations'
+import { createInvite, listOrgInvites, revokeInvite } from '@/services/firebase/invites'
 import { connectGoogleCalendar } from '@/services/google/auth'
 import { useCalendarStore } from '@/store/calendar.store'
 import { Card } from '@/components/ui/Card'
@@ -11,7 +12,7 @@ import { Button } from '@/components/ui/Button'
 import { Avatar } from '@/components/ui/Avatar'
 import { Badge } from '@/components/ui/Badge'
 import { ACCENTS, ACCENT_ORDER, ACCENT_LABELS } from '@/utils/theme'
-import type { NotificationPrefs, Organization } from '@/types'
+import type { NotificationPrefs, Organization, User, Invite, UserRole } from '@/types'
 
 const TIMEZONES = [
   'Asia/Kuala_Lumpur',
@@ -77,6 +78,16 @@ export function SettingsPage() {
   const [connecting, setConnecting] = useState(false)
   const [connectError, setConnectError] = useState('')
 
+  const [members, setMembers] = useState<User[]>([])
+  const [invites, setInvites] = useState<Invite[]>([])
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<UserRole>('member')
+  const [inviting, setInviting] = useState(false)
+  const [inviteError, setInviteError] = useState('')
+  const [inviteSentTo, setInviteSentTo] = useState('')
+
+  const isAdmin = user?.role === 'owner' || user?.role === 'admin'
+
   useEffect(() => {
     if (!user?.orgId) return
     getOrganization(user.orgId).then(data => {
@@ -87,7 +98,37 @@ export function SettingsPage() {
       setWorkDayEnd(data.settings.workDayEnd)
       setWorkDays(data.settings.workDays)
     })
+    listOrgUsers(user.orgId).then(setMembers)
   }, [user?.orgId])
+
+  useEffect(() => {
+    if (!user?.orgId || !isAdmin) return
+    listOrgInvites(user.orgId).then(setInvites)
+  }, [user?.orgId, isAdmin])
+
+  async function handleSendInvite() {
+    if (!user?.orgId || !org || !inviteEmail.trim()) return
+    setInviting(true)
+    setInviteError('')
+    setInviteSentTo('')
+    try {
+      const email = inviteEmail.trim().toLowerCase()
+      await createInvite(user.orgId, org.name, email, inviteRole, user.uid)
+      setInvites(await listOrgInvites(user.orgId))
+      setInviteSentTo(email)
+      setInviteEmail('')
+    } catch (err) {
+      setInviteError((err as Error).message || 'Failed to create invite')
+    } finally {
+      setInviting(false)
+    }
+  }
+
+  async function handleRevokeInvite(inviteId: string) {
+    if (!user?.orgId) return
+    await revokeInvite(inviteId)
+    setInvites(await listOrgInvites(user.orgId))
+  }
 
   function toggleDay(day: number) {
     setWorkDays(prev => (prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort()))
@@ -181,6 +222,73 @@ export function SettingsPage() {
             {orgSaved && <span className="text-xs font-semibold text-emerald-600">Saved</span>}
           </div>
         </div>
+      </Card>
+
+      <Card>
+        <h3 className="mb-3.5 text-[13.5px] font-bold text-ap-text-primary">Members</h3>
+        <div className="flex flex-col gap-2">
+          {members.map(m => (
+            <div key={m.uid} className="flex items-center gap-3">
+              <Avatar src={m.photoURL} name={m.displayName || m.email} size="sm" />
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-[13.5px] font-semibold text-ap-text-primary">{m.displayName || m.email}</p>
+                <p className="truncate text-xs text-ap-text-tertiary">{m.email}</p>
+              </div>
+              <Badge
+                label={m.role}
+                className={m.role === 'owner' || m.role === 'admin'
+                  ? 'bg-ap-accent-soft text-ap-accent-dark'
+                  : 'bg-ap-surface-alt text-ap-text-tertiary'}
+              />
+            </div>
+          ))}
+        </div>
+
+        {isAdmin && (
+          <>
+            {invites.length > 0 && (
+              <div className="mt-4 flex flex-col gap-2 border-t border-ap-border pt-3.5">
+                <p className="text-[13px] font-semibold text-ap-text-secondary">Pending invites</p>
+                {invites.map(inv => (
+                  <div key={inv.id} className="flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="truncate text-[13.5px] text-ap-text-primary">{inv.email}</p>
+                    </div>
+                    <Badge label={inv.role} className="bg-ap-surface-alt text-ap-text-tertiary" />
+                    <Button size="sm" variant="secondary" onClick={() => handleRevokeInvite(inv.id)}>Revoke</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-col gap-2.5 border-t border-ap-border pt-3.5">
+              <p className="text-[13px] font-semibold text-ap-text-secondary">Invite a member</p>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="name@company.com"
+                  value={inviteEmail}
+                  onChange={e => setInviteEmail(e.target.value)}
+                  className="flex-1"
+                />
+                <select
+                  className="rounded-xl border border-ap-border bg-ap-surface-alt px-3 py-3 text-sm text-ap-text-primary outline-none focus:border-ap-accent"
+                  value={inviteRole}
+                  onChange={e => setInviteRole(e.target.value as UserRole)}
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <Button onClick={handleSendInvite} loading={inviting} disabled={!inviteEmail.trim()}>Invite</Button>
+              </div>
+              {inviteError && <p className="text-xs text-red-500">{inviteError}</p>}
+              {inviteSentTo && !inviteError && (
+                <p className="text-xs text-emerald-600">
+                  Invite created for {inviteSentTo} — no email is sent automatically, let them know to sign in with Google using this address.
+                </p>
+              )}
+            </div>
+          </>
+        )}
       </Card>
 
       <Card>

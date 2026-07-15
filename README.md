@@ -234,3 +234,32 @@ git commit --amend --no-edit --reset-author        # for the tip commit
 # or, for multiple earlier commits:
 git rebase --exec "git commit --amend --no-edit --reset-author" origin/main
 ```
+
+---
+
+## Feature Decisions / Roadmap
+
+### Live-sync meeting recording (Google Meet / MS Teams) — researched July 2026
+
+**Goal:** click "start record" when a meeting begins, capture all participants' voices (including when the user has earphones in, so their mic doesn't pick up other participants' audio), and transcribe continuously.
+
+**What's free and worth building now — tab/screen audio capture:**
+Chrome and Edge support capturing a browser tab's or screen's audio output directly via `getDisplayMedia({ audio: true })` (the same permission prompt used for screen sharing), at no cost and with no third-party service. This captures what's playing in the meeting tab (Google Meet or Teams-in-browser) *before* it reaches the speaker/headphone output, which solves the earphone problem — the app hears other participants regardless of what audio device the user has plugged in. This plugs directly into our existing Whisper pipeline on the Worker with no new infrastructure.
+**Limitations:** only reliably works in Chromium browsers (Firefox ignores the audio constraint when sharing a tab; Safari returns no audio track at all), and only captures meetings running in a browser tab — not the native Teams desktop app (would need full-screen + system-audio capture instead, which is far less consistently supported across OSes).
+**Decision:** build this — a "Capture meeting tab audio" option alongside the existing mic recording, Chrome/Edge only for now.
+
+**What's not free — and deferred:**
+- **Per-speaker diarization** ("who said what"): the standard free/open-source tool is PyAnnote (via WhisperX), but it needs dedicated GPU/CPU inference infrastructure we don't have — Cloudflare Workers AI only exposes fixed hosted models, not custom diarization pipelines. Paid diarization APIs (AssemblyAI, Deepgram, Gladia) exist but conflict with this project's zero-billing architecture.
+- **Auto-joining Teams/Google Meet as a bot** (so recording starts without the user needing the meeting open in a tab they control): no free managed option exists — cheapest paid meeting-bot APIs run ~$0.35–0.50/hour (Skribby, Recall.ai). Open-source self-hosted bots (Vexa, Attendee.dev) avoid the per-hour fee but require running and maintaining our own headless-browser server continuously, which is a real infrastructure cost and maintenance burden, not a "free tier" fit.
+
+**Decision:** revisit diarization and auto-join bots only if/when there's budget for paid infra — they're valuable but not achievable inside the current $0 architecture. Tab-audio capture ships now as the practical middle ground.
+
+### Invite / collaboration — shipped July 2026
+
+Orgs can now have more than one member. Admins invite by email (Settings → Members); when the invited email signs in with Google, they're automatically attached to that org with the assigned role instead of getting their own new workspace.
+
+- **Roles:** `owner` (org creator) and `admin` can invite/revoke and manage the workspace; `member` can create/edit meetings and tasks but not manage members or org settings. (`manager` exists in the `UserRole` type but has no distinct permissions yet.)
+- **No email delivery:** there's no email-sending backend wired up (would need a Cloud Function + a provider like Resend/SendGrid). Creating an invite just writes a Firestore doc — the admin has to separately tell the invitee which email to sign in with. Revisit if this becomes a real friction point.
+- **Data model:** `invites/{orgId}__{email}` — deterministic doc ID so Firestore rules can `get()` it directly to validate a join without needing custom claims or a Cloud Function. Fields: `orgId`, `orgName`, `email`, `role`, `invitedBy`, `status` (`pending` | `accepted` | `revoked`), `createdAt`.
+- **Security tightened:** previously any signed-in user could rewrite their *own* `orgId`/`role` fields on their `users/{uid}` doc with no validation (self-elevation to `owner` of any org, or hijacking another org's ID) — `firestore.rules` now only allows changing those fields if either (a) the user owns the organization doc they're pointing at, or (b) there's a matching pending invite for their email/orgId/role. **This changes `firestore.rules` — you must run `firebase deploy --only firestore:rules` for it to take effect in production**, the same as any other rules change.
+- `organizations/{orgId}.memberIds` is still not kept in sync when someone joins via invite (pre-existing drift noted above) — membership is authoritative via `users/{uid}.orgId`, not `memberIds`. Fine for now since `listOrgUsers` already queries by `orgId`, not `memberIds`.

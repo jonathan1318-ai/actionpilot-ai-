@@ -7,7 +7,18 @@ import {
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore'
 import { auth, db, googleProvider } from './config'
 import { createOrganization } from './organizations'
+import { findPendingInviteForEmail, acceptInvite } from './invites'
 import type { User } from '@/types'
+
+async function joinOrgOrCreateOne(uid: string, email: string, displayName: string): Promise<{ orgId: string; role: User['role'] }> {
+  const invite = email ? await findPendingInviteForEmail(email) : null
+  if (invite) {
+    await acceptInvite(invite, uid)
+    return { orgId: invite.orgId, role: invite.role }
+  }
+  const orgId = await createOrganization(uid, `${displayName || 'My'}'s Workspace`, '')
+  return { orgId, role: 'owner' }
+}
 
 export async function signInWithGoogle(): Promise<void> {
   await signInWithPopup(auth, googleProvider)
@@ -29,8 +40,8 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
     await setDoc(ref, { lastActiveAt: serverTimestamp() }, { merge: true })
     const existing = snap.data() as User
     if (!existing.orgId) {
-      const orgId = await createOrganization(firebaseUser.uid, `${existing.displayName || 'My'}'s Workspace`, '')
-      return { ...existing, orgId }
+      const { orgId, role } = await joinOrgOrCreateOne(firebaseUser.uid, existing.email, existing.displayName)
+      return { ...existing, orgId, role }
     }
     return existing
   }
@@ -50,8 +61,8 @@ export async function getOrCreateUserDoc(firebaseUser: FirebaseUser): Promise<Us
   }
 
   await setDoc(ref, newUser)
-  const orgId = await createOrganization(firebaseUser.uid, `${newUser.displayName || 'My'}'s Workspace`, '')
-  return { ...(await getDoc(ref)).data(), orgId } as User
+  const { orgId, role } = await joinOrgOrCreateOne(firebaseUser.uid, newUser.email, newUser.displayName)
+  return { ...(await getDoc(ref)).data(), orgId, role } as User
 }
 
 export async function updateUserProfile(
