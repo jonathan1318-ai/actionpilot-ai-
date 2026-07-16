@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button'
 import { TranscriptUploader } from '@/components/meetings/TranscriptUploader'
 import { MicDictation } from '@/components/meetings/MicDictation'
 import { AudioCapture } from '@/components/meetings/AudioCapture'
+import { TabAudioCapture } from '@/components/meetings/TabAudioCapture'
 import { LANGUAGE_OPTIONS, type TranscriptLanguage } from '@/utils/language'
 
 const WAVEFORM_BARS = 24
@@ -113,11 +114,15 @@ export function NewMeetingPage() {
           <span className="text-[11.5px] font-semibold text-ap-text-tertiary">OR CONNECT A SOURCE</span>
           <div className="h-px flex-1 bg-ap-border" />
         </div>
-        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 md:grid-cols-4">
           <TranscriptUploader onText={setTranscript} />
           <MicDictation onResult={appendTranscript} language={language} />
           <AudioCapture onText={appendTranscript} language={language} />
+          <TabAudioCapture onText={appendTranscript} language={language} />
         </div>
+        <p className="mt-2.5 text-[11px] text-ap-text-tertiary">
+          "Capture meeting tab" records the other participants' audio directly from the browser tab (Chrome/Edge) — works even if you're wearing earphones and no audio is coming out of a speaker.
+        </p>
       </div>
 
       <div className="mt-8 flex flex-col gap-2">
