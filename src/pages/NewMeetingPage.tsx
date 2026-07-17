@@ -154,7 +154,7 @@ export function NewMeetingPage() {
         loading={loading}
         disabled={!title.trim() || !transcript.trim()}
       >
-        Extract tasks with Gemini
+        Extract tasks
       </Button>
     </div>
   )
